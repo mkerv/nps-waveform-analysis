@@ -47,8 +47,8 @@ ROOT::Math::Interpolator *interpolation[nblocks]; // function used for the inter
 TH1F *hsig_i[nblocks];                            // histogram showing the waveform for block i and a given event
 TF1 *finter[nblocks];
 
-// FIT FUNCTION
-
+// FIT FUNCTION - redfined in main function as a lmbda function for MT
+/*
 Double_t func(Double_t *x, Double_t *par)
 {
   Int_t j = (int)(par[0]);
@@ -60,6 +60,7 @@ Double_t func(Double_t *x, Double_t *par)
   }
   return val + par[1];
 }
+  */
 
 ///////////////////////////////////////////////////////////// FIT FUNCTION USED AND SCHEMATICS /////////////////////////////////////////////////////////////
 
@@ -256,18 +257,53 @@ void Fitwf(Int_t bn)
 void TEST_2(int run, int seg)
 {
 
-  int nthreads = 8;
 
-  ROOT::EnableImplicitMT(nthreads);
+// FIT FUNCTION redefined as a lambda function for MT use
+auto func = [=](Double_t *x, Double_t *par)
+{
+  Int_t j = (int)(par[0]);
+  Double_t val = 0;
+  for (Int_t p = 0; p < maxwfpulses; p++)
+  {
+    if (x[0] - par[2 + 2 * p] > 1 && x[0] - par[2 + 2 * p] < 109)
+      val += par[3 + 2 * p] * interpolation[j]->Eval(x[0] - par[2 + 2 * p]);
+  }
+  return val + par[1];
+};
 
-  std::cout << "Implicit MT enabled: " << ROOT::IsImplicitMTEnabled() << std::endl;
-  std::cout << "Number of threads: " << ROOT::GetThreadPoolSize() << std::endl;
+  TStopwatch t;
+  t.Start();
 
-  gROOT->Initialize();
+   // ENABLE MT
+   const int nthreads = 8; // or any number
+   ROOT::EnableImplicitMT(nthreads);
+   std::cout<<"Implicit MT enabled: "<<ROOT::IsImplicitMTEnabled()<<"\n";
+   std::cout<<"Number of threads: "<<ROOT::GetThreadPoolSize()<<"\n";
+
+   // BUILD TCHAIN
+   TChain chain("T");
+   TString fname = Form("/cache/hallc/c-nps/analysis/online/replays/nps_hms_coin_%d_%d_1_-1.root", run, seg);
+   TFile *testOpen = TFile::Open(filename);
+   if(!testOpen || testOpen->IsZombie()){
+     std::cerr << "ERROR: Cannot open file: " << filename << std::endl;
+     return;
+   }
+   testOpen->Close();
+   chain.Add(fname);
+   auto nEntries = chain.GetEntries(); //replaced wassims nentries
+   std::cout<<"Chain has "<< nEntries <<" entries.\n";
+
 
   // Before processing events, check the list of objects in memory
   std::cout << "Objects in memory before event processing:" << std::endl;
   gObjectTable->Print();
+
+
+  // Create an RDataFrame from the chain
+  ROOT::RDataFrame df(chain);  
+
+  // Flatten the waveforms to handle multiple per entry
+  //auto dfFlattened = df.Define("single_waveform", "Flatten(waveform)");
 
   if (run == 2016)
   {
@@ -285,55 +321,22 @@ void TEST_2(int run, int seg)
   Double_t ADCtomV = 1000. / 4096;                     // 1000 mV correspond a 4096 canaux
   Double_t integtopC = (1. / 4096) * (dt * 1.e3 / 50); // (1 V / 4096 adc channels) * (4000 ps time sample / 50 ohms input resistance) = 0.020 pc/channel
 
-  TStopwatch t;
-  t.Start();
-
+  
   // where the cosmic pulse is expected to be
   Int_t binmin;
   Int_t binmax;
-  long nentries;
-
-  // Input root file
-
-  TChain *tree = new TChain("T");
-
-  // TString filename = Form("/volatile/hallc/nps/nps-ana/ROOTfiles/COIN/PROD/nps_hms_coin_%d_%d_1_-1.root", run, seg);
-
-  // TString filename = Form("/cache/hallc/c-nps/analysis/online/replays/nps_hms_coin_%d_%d_1_-1.root", run, seg);
-
-  TString filename = Form("/cache/hallc/c-nps/analysis/online/replays/nps_hms_coin_%d_%d_1_-1.root", run, seg); // new files with the HMS calibration
-
-  // TString filename = Form("/volatile/hallc/nps/wassim/nps_hms_coin_%d_%d_1_-1.root", run, seg);//new files with the HMS calibration just for the first setting runs
-
-  // TString filename = Form("/mss/hallc/c-nps/analysis/online/replays/nps_hms_coin_%d_%d_1_-1.root", run, seg);
-
-  TFile *file = TFile::Open(filename);
-
-  if (file && !file->IsZombie())
-  {
-    tree->Add(filename);
-    nentries = tree->GetEntries();
-    cout << "There are:  " << nentries << " in this segment.\n";
-    file->Close();
-  }
-  else
-  {
-    // File doesn't exist or is corrupted, move to the next rootfile
-    cout << "File does not exist !! " << filename << endl;
-  }
 
   // Read reference waveforms
-
   const int nbparameters = 2 + 2 * maxwfpulses;
   cout << "nbparameters = " << nbparameters << endl;
   Double_t x[ntime], y[ntime];
   ifstream filewf;
-  Double_t dum1, ymax;
+  Double_t dum1, ymax; //dont seem to be used anywhere?
 
   for (Int_t i = 0; i < nblocks; i++)
   {
 
-    //  filewf.open(Form("/w/hallc-scshelf2102/nps/wassim/ANALYSIS/Work_Analysis/WF/BK_TEST/TEST_BOOM/5217-5236/fit_e_runs/RWF/ref_wf_%d.txt",i));
+    // filewf.open(Form("/w/hallc-scshelf2102/nps/wassim/ANALYSIS/Work_Analysis/WF/BK_TEST/TEST_BOOM/5217-5236/fit_e_runs/RWF/ref_wf_%d.txt",i));
     // filewf.open(Form("/w/hallc-scshelf2102/nps/wassim/ANALYSIS/Work_Analysis/WF/BK_TEST/TEST_BOOM/1969-1982/RWF/ref_wf_%d.txt",i));
 
     if (run > 6183 && run < 7500)
@@ -385,21 +388,20 @@ void TEST_2(int run, int seg)
     {
       filewf >> timeref[i] >> dum1; // used for my ref shapes (be careful in switching on the mean method !!!!!!!!!!!!!!!!!)
 
-      for (Int_t it = 0; it < ntime; it++)
-      {
-        filewf >> x[it] >> y[it];
-      }
       ymax = 0;
       for (Int_t it = 0; it < ntime; it++)
       {
+        filewf >> x[it] >> y[it];
         if (y[it] > ymax)
         {
           ymax = y[it];
           timeref[i] = x[it];
         }
       }
+      
       interpolation[i] = new ROOT::Math::Interpolator(ntime, ROOT::Math::Interpolation::kCSPLINE);
       interpolation[i]->SetData(ntime, x, y);
+      //i should create alambda function of func
       finter[i] = new TF1(Form("finter_%d", i), func, -200, ntime + 200, nbparameters);
       finter[i]->FixParameter(0, i); // numero de bloc
       // for(Int_t p=0;p<maxwfpulses;p++){cout<<"p ="<<p<<endl;finter[i]->FixParameter(2+2*p,0.);finter[i]->FixParameter(3+2*p,0.);}
@@ -429,150 +431,46 @@ void TEST_2(int run, int seg)
     filetdc >> tdcoffset[i];
   }
 
-  tree->SetBranchStatus("*", 0); // Deactivate all branches
-
-  // Activate only the needed branches
-  tree->SetBranchStatus("Ndata.NPS.cal.fly.adcSampWaveform", 1);
-  tree->SetBranchStatus("NPS.cal.fly.adcSampWaveform", 1);
-  tree->SetBranchStatus("Ndata.NPS.cal.fly.adcCounter", 1);
-  tree->SetBranchStatus("NPS.cal.fly.adcCounter", 1);
-  tree->SetBranchStatus("Ndata.NPS.cal.fly.adcSampPulseAmp", 1);
-  tree->SetBranchStatus("NPS.cal.fly.adcSampPulseAmp", 1);
-  tree->SetBranchStatus("Ndata.NPS.cal.fly.adcSampPulseInt", 1);
-  tree->SetBranchStatus("NPS.cal.fly.adcSampPulseInt", 1);
-  tree->SetBranchStatus("Ndata.NPS.cal.fly.adcSampPed", 1);
-  tree->SetBranchStatus("NPS.cal.fly.adcSampPed", 1);
-  tree->SetBranchStatus("Ndata.NPS.cal.fly.adcSampPulseTime", 1);
-  tree->SetBranchStatus("NPS.cal.fly.adcSampPulseTime", 1);
-  tree->SetBranchStatus("Ndata.NPS.cal.fly.adcSampPulseTimeRaw", 1);
-  tree->SetBranchStatus("NPS.cal.fly.adcSampPulseTimeRaw", 1);
-  tree->SetBranchStatus("T.hms.hT1_tdcTime", 1);
-  tree->SetBranchStatus("T.hms.hT2_tdcTime", 1);
-  tree->SetBranchStatus("T.hms.hT3_tdcTime", 1);
-  tree->SetBranchStatus("T.hms.hTRIG1_tdcTime", 1);
-  tree->SetBranchStatus("T.hms.hTRIG2_tdcTime", 1);
-  tree->SetBranchStatus("T.hms.hTRIG3_tdcTime", 1);
-  tree->SetBranchStatus("T.hms.hTRIG4_tdcTime", 1);
-  tree->SetBranchStatus("T.hms.hTRIG5_tdcTime", 1);
-  tree->SetBranchStatus("T.hms.hTRIG6_tdcTime", 1);
-  tree->SetBranchStatus("beta", 1);
-  tree->SetBranchStatus("cernpeSum", 1);
-  tree->SetBranchStatus("caletracknorm", 1);
-  tree->SetBranchStatus("caletottracknorm", 1);
-  tree->SetBranchStatus("caletotnorm", 1);
-  tree->SetBranchStatus("H.react.x", 1);
-  tree->SetBranchStatus("H.react.y", 1);
-  tree->SetBranchStatus("H.react.z", 1);
-  tree->SetBranchStatus("H.gtr.dp", 1);
-  tree->SetBranchStatus("H.gtr.th", 1);
-  tree->SetBranchStatus("H.gtr.ph", 1);
-  tree->SetBranchStatus("H.gtr.px", 1);
-  tree->SetBranchStatus("H.gtr.py", 1);
-  tree->SetBranchStatus("H.gtr.pz", 1);
-  tree->SetBranchStatus("H.cer.npeSum", 1);
-  tree->SetBranchStatus("H.cal.etottracknorm", 1);
-
-  // Input variables
-
-  Int_t NSampWaveForm;
-  tree->SetBranchAddress("Ndata.NPS.cal.fly.adcSampWaveform", &NSampWaveForm); // should correspond to Ndata
-  Double_t SampWaveForm[Ndata];
-  tree->SetBranchAddress("NPS.cal.fly.adcSampWaveform", &SampWaveForm); // Contain the waveforms for the tested calo blocks
-
-  Int_t NadcCounter;
-  tree->SetBranchAddress("Ndata.NPS.cal.fly.adcCounter", &NadcCounter); // total number of pulses above theshold (could have up to 4 pulses per block)
-  Double_t adcCounter[nsignals];
-  tree->SetBranchAddress("NPS.cal.fly.adcCounter", &adcCounter);
-
-  Int_t NadcSampPulseAmp;
-  tree->SetBranchAddress("Ndata.NPS.cal.fly.adcSampPulseAmp", &NadcSampPulseAmp);
-  Double_t adcSampPulseAmp[nsignals];
-  tree->SetBranchAddress("NPS.cal.fly.adcSampPulseAmp", &adcSampPulseAmp);
-
-  Int_t NadcSampPulseInt;
-  tree->SetBranchAddress("Ndata.NPS.cal.fly.adcSampPulseInt", &NadcSampPulseInt);
-  Double_t adcSampPulseInt[nsignals];
-  tree->SetBranchAddress("NPS.cal.fly.adcSampPulseInt", &adcSampPulseInt);
-
-  Int_t NadcSampPulsePed;
-  tree->SetBranchAddress("Ndata.NPS.cal.fly.adcSampPed", &NadcSampPulsePed);
-  Double_t adcSampPulsePed[nsignals];
-  tree->SetBranchAddress("NPS.cal.fly.adcSampPed", &adcSampPulsePed);
-
-  Int_t NadcSampPulseTime;
-  tree->SetBranchAddress("Ndata.NPS.cal.fly.adcSampPulseTime", &NadcSampPulseTime);
-  Double_t adcSampPulseTime[nsignals];
-  tree->SetBranchAddress("NPS.cal.fly.adcSampPulseTime", &adcSampPulseTime);
-
-  Int_t NadcSampPulseTimeRaw;
-  tree->SetBranchAddress("Ndata.NPS.cal.fly.adcSampPulseTimeRaw", &NadcSampPulseTimeRaw);
-  Double_t adcSampPulseTimeRaw[nsignals];
-  tree->SetBranchAddress("NPS.cal.fly.adcSampPulseTimeRaw", &adcSampPulseTimeRaw);
-
-  Double_t hT1_tdcTime;
-  tree->SetBranchAddress("T.hms.hT1_tdcTime", &hT1_tdcTime);
-  Double_t hT2_tdcTime;
-  tree->SetBranchAddress("T.hms.hT2_tdcTime", &hT2_tdcTime);
-  Double_t hT3_tdcTime;
-  tree->SetBranchAddress("T.hms.hT3_tdcTime", &hT3_tdcTime);
-  Double_t hTRIG1_tdcTime;
-  tree->SetBranchAddress("T.hms.hTRIG1_tdcTime", &hTRIG1_tdcTime);
-  Double_t hTRIG2_tdcTime;
-  tree->SetBranchAddress("T.hms.hTRIG2_tdcTime", &hTRIG2_tdcTime);
-  Double_t hTRIG3_tdcTime;
-  tree->SetBranchAddress("T.hms.hTRIG3_tdcTime", &hTRIG3_tdcTime);
-  Double_t hTRIG4_tdcTime;
-  tree->SetBranchAddress("T.hms.hTRIG4_tdcTime", &hTRIG4_tdcTime);
-  Double_t hTRIG5_tdcTime;
-  tree->SetBranchAddress("T.hms.hTRIG5_tdcTime", &hTRIG5_tdcTime);
-  Double_t hTRIG6_tdcTime;
-  tree->SetBranchAddress("T.hms.hTRIG6_tdcTime", &hTRIG6_tdcTime);
-  Double_t beta;
-  tree->SetBranchAddress("beta", &beta);
-  Double_t cernpeSum;
-  tree->SetBranchAddress("cernpeSum", &cernpeSum);
-  Double_t caletracknorm;
-  tree->SetBranchAddress("caletracknorm", &caletracknorm);
-  Double_t caletottracknorm;
-  tree->SetBranchAddress("caletottracknorm", &caletottracknorm);
-  Double_t caletotnorm;
-  tree->SetBranchAddress("caletotnorm", &caletotnorm);
-  Double_t vx;
-  tree->SetBranchAddress("H.react.x", &vx);
-  Double_t vy;
-  tree->SetBranchAddress("H.react.y", &vy);
-  Double_t vz;
-  tree->SetBranchAddress("H.react.z", &vz);
-  Double_t dp;
-  tree->SetBranchAddress("H.gtr.dp", &dp);
-  Double_t th;
-  tree->SetBranchAddress("H.gtr.th", &th);
-  Double_t ph;
-  tree->SetBranchAddress("H.gtr.ph", &ph);
-  Double_t px;
-  tree->SetBranchAddress("H.gtr.px", &px);
-  Double_t py;
-  tree->SetBranchAddress("H.gtr.py", &py);
-  Double_t pz;
-  tree->SetBranchAddress("H.gtr.pz", &pz);
-  Double_t cernpe;
-  tree->SetBranchAddress("H.cer.npeSum", &cernpe);
-  Double_t caltracknorm;
-  tree->SetBranchAddress("H.cal.etottracknorm", &caltracknorm);
-  Double_t hcnps_intlk_cz_t_back[ntemp];
-  Double_t hcnps_intlk_cz_t_front[ntemp];
-
-  // Enable only the required branches
-  for (int i = 0; i < ntemp; ++i)
-  {
-    tree->SetBranchStatus(Form("hcnps_intlk_cz_t_back_%i", i + 1), 1);
-    tree->SetBranchStatus(Form("hcnps_intlk_cz_t_front_%i", i + 1), 1);
-
-    tree->SetBranchAddress(Form("hcnps_intlk_cz_t_back_%i", i + 1), &hcnps_intlk_cz_t_back[i]);
-    tree->SetBranchAddress(Form("hcnps_intlk_cz_t_front_%i", i + 1), &hcnps_intlk_cz_t_front[i]);
-  }
-
-  cout << "Nb of entries in rootfiles = " << nentries << endl;
+//Load only required branches into dataframe
+auto df = df.Define("NSampWaveForm", "Ndata.NPS.cal.fly.adcSampWaveform")
+.Define("SampWaveForm", "NPS.cal.fly.adcSampWaveform")
+.Define("NadcCounter", "Ndata.NPS.cal.fly.adcCounter")
+.Define("adcCounter", "NPS.cal.fly.adcCounter")
+.Define("NadcSampPulseAmp", "Ndata.NPS.cal.fly.adcSampPulseAmp")
+.Define("adcSampPulseAmp", "NPS.cal.fly.adcSampPulseAmp")
+.Define("NadcSampPulseInt", "Ndata.NPS.cal.fly.adcSampPulseInt")
+.Define("adcSampPulseInt", "NPS.cal.fly.adcSampPulseInt")
+.Define("NadcSampPulsePed", "Ndata.NPS.cal.fly.adcSampPulsePed")
+.Define("adcSampPulsePed", "NPS.cal.fly.adcSampPulsePed")
+.Define("NadcSampPulseTime", "Ndata.NPS.cal.fly.adcSampPulseTime")
+.Define("adcSampPulseTime", "NPS.cal.fly.adcSampPulseTime")
+.Define("NadcSampPulseTimeRaw", "Ndata.NPS.cal.fly.adcSampPulseTimeRaw")
+.Define("adcSampPulseTimeRaw", "NPS.cal.fly.adcSampPulseTimeRaw")
+.Define("hT1_tdcTime", "T.hms.hT1_tdcTime")
+.Define("hT2_tdcTime", "T.hms.hT2_tdcTime")
+.Define("hT3_tdcTime", "T.hms.hT3_tdcTime")
+.Define("hTRIG1_tdcTime", "T.hms.hTRIG1_tdcTime")
+.Define("hTRIG2_tdcTime", "T.hms.hTRIG2_tdcTime")
+.Define("hTRIG3_tdcTime", "T.hms.hTRIG3_tdcTime")
+.Define("hTRIG4_tdcTime", "T.hms.hTRIG4_tdcTime")
+.Define("hTRIG5_tdcTime", "T.hms.hTRIG5_tdcTime")
+.Define("hTRIG6_tdcTime", "T.hms.hTRIG6_tdcTime")
+.Define("beta", "beta")
+.Define("cernpeSum", "cernpeSum")
+.Define("caletracknorm", "caletracknorm")
+.Define("caletottracknorm", "caletottracknorm")
+.Define("caletotnorm", "caletotnorm")
+.Define("vx", "H.react.x")
+.Define("vy", "H.react.y")
+.Define("vz", "H.react.z")
+.Define("dp", "H.gtr.dp")
+.Define("th", "H.gtr.th")
+.Define("ph", "H.gtr.ph")
+.Define("px", "H.gtr.px")
+.Define("py", "H.gtr.py")
+.Define("pz", "H.gtr.pz")
+.Define("cernpe", "H.cer.npeSum")
+.Define("caltracknorm", "H.cal.etottracknorm");
 
   // Output rootfile
 
@@ -648,12 +546,6 @@ void TEST_2(int run, int seg)
   treeout->Branch("vx", &vx, "vx/D");
   treeout->Branch("vy", &vy, "vy/D");
   treeout->Branch("vz", &vz, "vz/D");
-
-  Double_t temp_back[ntemp];
-  Double_t temp_front[ntemp];
-
-  treeout->Branch("temp_back", &temp_back, Form("temp_back[%i]/D", ntemp));
-  treeout->Branch("temp_front", &temp_front, Form("temp_front[%i]/D", ntemp));
 
   // Other variables
   Double_t sigmax[nblocks];
