@@ -41,23 +41,6 @@ Double_t timerefacc = -4.5; // car les bons pulses elastiques poussent vers 45.5
 Double_t timerefacc2 = 0;   // en (-4ns) car le pic de timewf pousse vers -22ns
 
 ROOT::Math::Interpolator *interpolation[nblocks]; // function used for the interpolation
-// TH1F *hsig_i[nblocks];                            // histogram showing the waveform for block i and a given event
-// TF1 *finter[nblocks];
-
-// FIT FUNCTION - redfined in main function as a lmbda function for MT
-/*
-Double_t func(Double_t *x, Double_t *par)
-{
-  Int_t j = (int)(par[0]);
-  Double_t val = 0;
-  for (Int_t p = 0; p < maxwfpulses; p++)
-  {
-    if (x[0] - par[2 + 2 * p] > 1 && x[0] - par[2 + 2 * p] < 109)
-      val += par[3 + 2 * p] * interpolation[j]->Eval(x[0] - par[2 + 2 * p]);
-  }
-  return val + par[1];
-}
-  */
 
 ///////////////////////////////////////////////////////////// FIT FUNCTION USED AND SCHEMATICS /////////////////////////////////////////////////////////////
 
@@ -70,21 +53,17 @@ auto Fitwf = [&](Int_t bn)
 
   for (Int_t p = 0; p < maxwfpulses; p++)
   {
-
     // cout << "Setting parameters for pulse " << p << " with index " << 2+2*p << " and " << 3+2*p << endl;
-
     wfampl[bn][p] = -1;
   }
 
   for (Int_t it = 0; it < ntime - 6; it++) // loop over number of samples(110) in an event for a given block
   {
-
     if (!finter[bn])
     {
       cout << " block=" << bn << " finter is nullptr" << endl;
       return;
     }
-
     if (!hsig_i[bn])
     {
       cout << ", block=" << bn << " hsig_i is nullptr" << endl;
@@ -92,15 +71,11 @@ auto Fitwf = [&](Int_t bn)
     }
 
     // Condition over the number of samples in the pulse finding scheme
-
     if (hsig_i[bn]->GetBinContent(it + 1) < hsig_i[bn]->GetBinContent(it + 2) && hsig_i[bn]->GetBinContent(it + 2) < hsig_i[bn]->GetBinContent(it + 3) && hsig_i[bn]->GetBinContent(it + 3) <= hsig_i[bn]->GetBinContent(it + 4) && hsig_i[bn]->GetBinContent(it + 4) >= hsig_i[bn]->GetBinContent(it + 5))
     {
-
       if (hsig_i[bn]->GetBinContent(it + 4) > 0)
       {
-
         // check if we exceeded the number of pulses
-
         if (wfnpulse[bn] >= maxwfpulses)
         {
           cout << "Warning: wfnpulse[" << bn << "] exceeded maxwfpulses!" << endl;
@@ -112,7 +87,6 @@ auto Fitwf = [&](Int_t bn)
         wftime[bn][wfnpulse[bn]] = hsig_i[bn]->GetBinCenter(it + 4); // get the time of the pulse found
 
         // flag for the good pulse
-
         if (TMath::Abs(wftime[bn][wfnpulse[bn]] - timeref[bn] - timerefacc) < 4.1)
         {
           good = 1;
@@ -140,22 +114,16 @@ auto Fitwf = [&](Int_t bn)
 
   // Adjust the parameters of the fit function
 
-  // File<<"c_0"<<endl;
-
   for (Int_t p = 0; p < maxwfpulses; p++)
   {
-    // File<<"c1"<<endl;
     finter[bn]->FixParameter(2 + 2 * p, 0.);
-    // File<<"c2"<<endl;
     finter[bn]->FixParameter(3 + 2 * p, 0.);
   }
 
   if (wfnpulse[bn] > 0 && good == 1)
   {
-
     for (Int_t p = 0; p < TMath::Min(maxwfpulses, wfnpulse[bn]); p++)
     {
-
       finter[bn]->ReleaseParameter(2 + 2 * p);
       finter[bn]->ReleaseParameter(3 + 2 * p);
 
@@ -167,14 +135,10 @@ auto Fitwf = [&](Int_t bn)
     }
   }
 
-  // File<<"c3"<<endl;
-
   if (wfnpulse[bn] > 0 && good == 0)
   {
-
     for (Int_t p = 0; p < TMath::Min(maxwfpulses, wfnpulse[bn]); p++)
     {
-
       finter[bn]->ReleaseParameter(2 + 2 * p);
       finter[bn]->ReleaseParameter(3 + 2 * p);
 
@@ -197,8 +161,6 @@ auto Fitwf = [&](Int_t bn)
       finter[bn]->SetParLimits(3 + 2 * p, wfampl[bn][p] * 0.2, wfampl[bn][p] * 3);
     }
 
-    // File<<"c4"<<endl;
-
     // On recherche quand meme un eventuel pulse en temps
 
     finter[bn]->ReleaseParameter(2 + 2 * wfnpulse[bn]);
@@ -213,14 +175,10 @@ auto Fitwf = [&](Int_t bn)
     wfnpulse[bn]++;
   }
 
-  // File<<"c5"<<endl;
-
   if (wfnpulse[bn] == 0)
   {
-
     for (Int_t p = 0; p < 1; p++)
     {
-
       finter[bn]->ReleaseParameter(2 + 2 * p);
       finter[bn]->ReleaseParameter(3 + 2 * p);
 
@@ -234,18 +192,13 @@ auto Fitwf = [&](Int_t bn)
     wfnpulse[bn]++;
   }
 
-  // File<<"c6"<<endl;
-
   finter[bn]->SetParameter(1, 0.);
   finter[bn]->SetParLimits(1, -100, 100.);
 
-  // File<<"c7"<<endl;
   // hsig_i[bn]->Fit(Form("finter_%d",bn),"Q","",TMath::Max(0.,wftime[bn][0]-20),ntime);
   // File << "Checkpoint: Before fitting function for bn = " << bn << endl;
 
   hsig_i[bn]->Fit(Form("finter_%d", bn), "Q", "", 0., ntime);
-
-  // File<<"c8"<<endl;
 }
 
 /////////////////////////////////////////////////////////////MAIN FUNCTION ///////////////////////////////////////////////////////////////////////
@@ -302,14 +255,9 @@ TEST_2(int run, int seg)
 
   if (run == 2016)
   {
-    timerefacc = -10;
-  } // keep this condition and might add more runs if that happens again
+    timerefacc = -10; // keep this condition and might add more runs if that happens again
+  }
 
-  // timerefacc = timerefacc + 10;
-  // timerefacc2 = timerefacc2 + 10 * 4;
-
-  // int end_event, start_event;
-  // const int evts_per_job = 250000;
   Double_t dt = 4.;                                    // time bin (sample) width (4 ns), the total time window is then ntime*dt
   const int nslots = 1104;                             // nb maximal de slots dans tous les fADC
   const int Ndata = nslots * (ntime + 1 + 1);          //(1104 slots fADC au total mais pas tous utilises y compris 2 PM scintillateurs?) should correspond to Ndata.NPS.cal.fly.adcSampWaveform variable in the root file
@@ -325,10 +273,17 @@ TEST_2(int run, int seg)
   cout << "nbparameters = " << nbparameters << endl;
   Double_t x[ntime], y[ntime];
   ifstream filewf;
-  Double_t dum1, ymax; // dont seem to be used anywhere?
+  Double_t dum1, ymax;
+
+  // Read tdc_offset_param (needed to determine HMS corrections to the timing)//For now, it is just one file
+  Float_t tdcoffset[nblocks];
+
+  ifstream filetdc("/w/hallc-scshelf2102/nps/wassim/ANALYSIS/Work_Analysis/WF/BK_TEST/TEST_BOOM/6151-6168/fit_e_runs/RWF/tdc_offset_param.txt"); // Done
 
   for (Int_t i = 0; i < nblocks; i++)
   {
+
+    filetdc >> tdcoffset[i];
 
     // filewf.open(Form("/w/hallc-scshelf2102/nps/wassim/ANALYSIS/Work_Analysis/WF/BK_TEST/TEST_BOOM/5217-5236/fit_e_runs/RWF/ref_wf_%d.txt",i));
     // filewf.open(Form("/w/hallc-scshelf2102/nps/wassim/ANALYSIS/Work_Analysis/WF/BK_TEST/TEST_BOOM/1969-1982/RWF/ref_wf_%d.txt",i));
@@ -379,6 +334,8 @@ TEST_2(int run, int seg)
 
     timeref[i] = -1.e6;
     interpolation[i] = new ROOT::Math::Interpolator(ntime, ROOT::Math::Interpolation::kCSPLINE);
+
+    // Fill array with reference waveform (x,y) for each block. set reftime @ ymax
     if (filewf.is_open())
     {
       filewf >> timeref[i] >> dum1; // used for my ref shapes (be careful in switching on the mean method !!!!!!!!!!!!!!!!!)
@@ -396,32 +353,7 @@ TEST_2(int run, int seg)
       interpolation[i]->SetData(ntime, x, y);
     }
     filewf.close();
-    // Moved inside lamnda function. need an interpolation function array for each thread
-    /*
-    finter[i] = new TF1(Form("finter_%d", i), func, -200, ntime + 200, nbparameters);
-    finter[i]->FixParameter(0, i); // numero de bloc
-    finter[i]->SetLineColor(4);
-    finter[i]->SetNpx(1100);
-  */
     // cout<<i<<" "<<timeref[i]<<endl;
-  }
-
-  // Read tdc_offset_param (needed to determine HMS corrections to the timing)//For now, it is just one file
-  Float_t tdcoffset[nblocks];
-  // ifstream filetdc("/w/hallc-scshelf2102/nps/wassim/ANALYSIS/Work_Analysis/WF/BK_TEST/TEST_BOOM/6171-6183/fit_e_runs/fit_elastic_runs/results_elastics/refwf/tdc_offset_param.txt");//Done
-  ifstream filetdc("/w/hallc-scshelf2102/nps/wassim/ANALYSIS/Work_Analysis/WF/BK_TEST/TEST_BOOM/6151-6168/fit_e_runs/RWF/tdc_offset_param.txt"); // Done
-  // ifstream filetdc("/w/hallc-scshelf2102/nps/wassim/ANALYSIS/Work_Analysis/WF/BK_TEST/TEST_BOOM/5217-5236/fit_e_runs/RWF/tdc_offset_param.txt");//Done
-  // ifstream filetdc("/w/hallc-scshelf2102/nps/wassim/ANALYSIS/Work_Analysis/WF/BK_TEST/TEST_BOOM/5183-5208/fit_e_runs/RWF/tdc_offset_param.txt");//Done
-  // ifstream filetdc("/w/hallc-scshelf2102/nps/wassim/ANALYSIS/Work_Analysis/WF/BK_TEST/TEST_BOOM/3883-3898/fit_e_runs/RWF/tdc_offset_param.txt");//Done
-  // ifstream filetdc("/w/hallc-scshelf2102/nps/wassim/ANALYSIS/Work_Analysis/WF/BK_TEST/TEST_BOOM/2900-2920/RWF/tdc_offset_param.txt");//Done
-  // ifstream filetdc("/w/hallc-scshelf2102/nps/wassim/ANALYSIS/Work_Analysis/WF/BK_TEST/TEST_BOOM/2875-2885/RWF/tdc_offset_param.txt");//Done
-  // ifstream filetdc("/w/hallc-scshelf2102/nps/wassim/ANALYSIS/Work_Analysis/WF/BK_TEST/TEST_BOOM/2855-2871/RWF/tdc_offset_param.txt");//Done
-  // ifstream filetdc("/w/hallc-scshelf2102/nps/wassim/ANALYSIS/Work_Analysis/WF/BK_TEST/TEST_BOOM/1969-1982/RWF/tdc_offset_param.txt");//Done
-  // ifstream filetdc("/w/hallc-scshelf2102/nps/wassim/ANALYSIS/Work_Analysis/WF/BK_TEST/TEST_BOOM/1423-1511/RWF/tdc_offset_param.txt");//Done
-
-  for (Int_t i = 0; i < nblocks; i++)
-  {
-    filetdc >> tdcoffset[i];
   }
 
   // Load only required branches into dataframe
@@ -468,13 +400,10 @@ TEST_2(int run, int seg)
 
   // Output rootfile
 
-  Int_t tracage = 0; // 1 to see the waveforms event by event
-
   TFile *fout;
-
+  Int_t tracage = 0; // 1 to see the waveforms event by event
   if (tracage == 0)
   {
-
     TString rootfilePath = Form("nps_production_%d_%d.root", run, seg);
 
     cout << "Rootfile location: " << rootfilePath << endl;
@@ -484,73 +413,10 @@ TEST_2(int run, int seg)
   TTree *treeout = new TTree("T", "Tree organized");
   treeout->SetAutoFlush(-300000000);
 
-  /////TODO: convert all needed treeout branches to df.Histo1D() then ->write() at end of code
-  
-  // Output variables
-
-
-  // Double_t signal[nblocks][ntime]; // treeout->Branch("signal",&signal,Form("signal[%d][%d]/D",nblocks,ntime));//if we want to save the raw waveforms in the output rootfile
-  // no global arays. needs to be created within lamda function for it to be thread safe.
-
-  // Double_t ampl2[nblocks]; // treeout->Branch("ampl2",&ampl2,Form("ampl2[%d]/D",nblocks));//amplitude of the pulse relatively to background
-  // Double_t ampl[nblocks];
-  treeout->Branch("ampl", &ampl, Form("ampl[%d]/D", nblocks)); // amplitude of the pulse (a comparer avec Sampampl)
-  // Double_t amplwf[nblocks];
-  treeout->Branch("amplwf", &amplwf, Form("amplwf[%d]/D", nblocks)); // amplwfitude of the pulse (a comparer avec Sampamplwf)
-  // treeout->Branch("wfampl",&wfampl,Form("wfampl[%d][%d]/D",nblocks,maxwfpulses));
-  // treeout->Branch("wftime",&wftime,Form("wftime[%d][%d]/D",nblocks,maxwfpulses));
-  treeout->Branch("wfnpulse", &wfnpulse, Form("wfnpulse[%d]/I", nblocks)); // number of pulses in one block
-  treeout->Branch("Sampampl", &Sampampl, Form("Sampampl[%d]/D", nblocks)); // amplitude of the 1st pulse
-  treeout->Branch("Samptime", &Samptime, Form("Samptime[%d]/D", nblocks)); // time of the 1st pulse 'ns)
-  // Double_t ener[nblocks];
-  //  Double_t time[nblocks];
-  // Double_t timewf[nblocks];
-  treeout->Branch("timewf", &timewf, Form("timewf[%d]/D", nblocks)); // timewf position of the pulse maximum
-  treeout->Branch("chi2", &chi2, Form("chi2[%d]/D", nblocks));       // time of the 1st pulse 'ns)
-  treeout->Branch("enertot", &enertot, "enertot/D");                 // sum of all ener[i] : total energy deposited in the calo (!! energy calibration is not done yet)
-  treeout->Branch("integtot", &integtot, "integtot/D");              // sum of all integ[i]
-  // Double_t larg50[nblocks];                                          // treeout->Branch("larg50",&larg50,Form("larg50[%d]/D",nblocks));//RMS of waveforms relatively to zero
-  // Double_t larg90[nblocks];                                          // treeout->Branch("larg90",&larg90,Form("larg90[%d]/D",nblocks));//RMS of waveforms relatively to zero
-  // Int_t pres[nblocks]; //no glbal arays. needs to be created within lamda function for it to be thread safe.
-  // treeout->Branch("pres", &pres, Form("pres[%d]/I", nblocks)); // RMS of waveforms relatively to zero
-  treeout->Branch("seg", &seg, "seg/I");
-  // treeout->Branch("job_number",&job_number,"job_number/I");
-  // Int_t event;
-  treeout->Branch("event", &event, "event/I"); // event number in input rootfiles
-  treeout->Branch("beta", &beta, "beta/D");
-  treeout->Branch("cernpeSum", &cernpeSum, "cernpeSum/D");
-  treeout->Branch("caletracknorm", &caletracknorm, "caletracknorm/D");
-  treeout->Branch("caletottracknorm", &caletottracknorm, "caletottracknorm/D");
-  treeout->Branch("caletotnorm", &caletotnorm, "caletotnorm/D");
-  treeout->Branch("corr_time_HMS", &corr_time_HMS, "corr_time_HMS/D");
-  treeout->Branch("dp", &dp, "dp/D");
-  treeout->Branch("th", &th, "th/D");
-  treeout->Branch("ph", &ph, "ph/D");
-  treeout->Branch("px", &px, "px/D");
-  treeout->Branch("py", &py, "py/D");
-  treeout->Branch("pz", &pz, "pz/D");
-  treeout->Branch("vx", &vx, "vx/D");
-  treeout->Branch("vy", &vy, "vy/D");
-  treeout->Branch("vz", &vz, "vz/D");
-
   // Other variables
-  Int_t ilin, icol, ilinc, icolc, inp;
+  Int_t ilinc, icolc, inp;
   Int_t nsampwf = 0;
   Int_t ndataprob = 0;
-  Int_t nb = 0;
-
-  // Histograms
-  /* Moved inside threadsafe lambda function for now. not thew way to do it. should define df.histo1D 
-  for (Int_t i = 0; i < nblocks; i++)
-  {
-    hsig_i[i] = new TH1F(Form("hsig_i%d", i), Form("hsig_i%d", i), ntime, 0, ntime);
-    hsig_i[i]->SetLineColor(1);
-    hsig_i[i]->SetLineWidth(2);
-    hsig_i[i]->GetXaxis()->SetTitle("Time (4 ns)");
-    hsig_i[i]->GetYaxis()->SetTitle("(mV)");
-    hsig_i[i]->GetYaxis()->SetLabelSize(0.05);
-  }
-    */
 
   TLatex *tex = new TLatex();
   tex->SetTextSize(0.015);
@@ -564,9 +430,9 @@ TEST_2(int run, int seg)
     timemean2[ii] = 150;
   } // 1st pass analysis, when the macro analyse_wassim.C is not executed yet (30 is the default value)
   // 2nd pass analysis, when the macro analyse_wassim.C is already executed. If not, comment the following lines
-  ifstream filetime("filetime.txt");
-  Float_t dum;
 
+
+  /////TODO: convert all needed treeout histos to df.Histo1D() and add to dataframe
   TH1F *h1time = new TH1F("h1time", "pulse (>20mV) shift (4*ns units) relatively to elastic refwf (all found pulses included)", 200, -50, 50);
   TH1F *h2time = new TH1F("h2time", "pulse (>20mV) time (ns) (all found pulses included)", 200, -100, 100);
 
@@ -575,29 +441,80 @@ TEST_2(int run, int seg)
   // this is where sequential event loop was
 
   // HMS CUTS
-  auto d2 = df.Filter(TMath::Abs(th) < 0.08)
+  auto df = df.Filter(TMath::Abs(th) < 0.08)
                 .Filter(Math::Abs(ph) < 0.04)
                 .Filter(TMath::Abs(dp) < 10);
 
   ////////Lambda funtion for the per-event wf analysis/////////
-  auto analyze = [=](Int_t NSampWaveForm, const std::vector<Int_t> &SampWaveForm, Int_t evt, Int_t NadcCounter, const std::vector<Int_t> &adcCounter, const std::vector<Int_t> adcSampPulseTime, const std::vector<Int_t> adcSampPulseTimeRaw)
+  auto analyze = [=](Int_t NSampWaveForm, const std::vector<Double_t> &SampWaveForm, Int_t evt, Int_t NadcCounter, const std::vector<Int_t> &adcCounter, const std::vector<Double_t> adcSampPulseTime, const std::vector<Double_t> adcSampPulseTimeRaw)
   {
     TF1 *finter[nblocks];
     TH1F *hsig_i[nblocks];
-    Int_t pres[nblocks];
+    Int_t pres[nblocks] = {0};
     Double_t signal[nblocks][ntime];
     Int_t bloc, nsamp;
+
+    Double_t enertot = 0.;
+    Double_t integtot = 0.;
+    Double_t corr_time_HMS = 0.;
+
+    Double_t timewf[nblocks] = {-100};
+    Double_t amplwf[nblocks] = {-100};
+    Double_t chi2[nblocks] = {-1};
+    Double_t ener[nblocks];
+    Double_t integ[nblocks];
+    Double_t noise[nblocks];
+    Double_t bkg[nblocks];
+    Double_t sigmax[nblocks];
+    Double_t Sampampl[nblocks] = {-100};
+    Double_t Sampped[nblocks];
+    Double_t Samptime[nblocks] = {-100};
+    Double_t Sampener[nblocks];
+    Double_t Npulse[nblocks];
+
+    Int_t wfnpulse[nblocks] = {-100};
+    Double_t wfampl[nblocks][maxwfpulses];
+    Double_t wftime[nblocks][maxwfpulses];
+    // not used but here they are anyway
+    Double_t ampl2[nblocks];
+    Double_t ampl[nblocks] = {-100};
+    Double_t time[nblocks];
+    Double_t larg50[nblocks];
+    Double_t larg90[nblocks];
+    Double_t max50, max90, min50, min90;
+
     if (NSampWaveForm > Ndata)
     {
       nsampwf++;
       cout << "!!!! NSampWaveForm problem  " << evt << "  " << NSampWaveForm << " " << Ndata << endl;
+      // Need to return something.All Arrays initialized to 0 or -100
+      return std::make_tuple(chi2, ampl, amplwf, wfnpulse, Sampampl, Samptime, timewf, enertot, integtot, pres, corr_time_HMS);
     }
 
-    if (NSampWaveForm <= Ndata)
-    { // NSampWaveForm must be <= Ndata (otherwise correct Ndata value)
-
+    if (NSampWaveForm <= Ndata) // NSampWaveForm must be <= Ndata (otherwise correct Ndata value)
+    {
       for (Int_t i = 0; i < nblocks; i++)
       {
+        // Initialize per-block Arrays and Histos for WFA
+        ener[i] = 0;
+        integ[i] = 0;
+        noise[i] = 0;
+        bkg[i] = 0;
+        sigmax[i] = -100;
+        Sampped[i] = -100;
+        Sampener[i] = -100;
+        Npulse[i] = 0;
+
+        finter[i] = new TF1(Form("finter_%d", i), func, -200, ntime + 200, nbparameters);
+        finter[i]->FixParameter(0, i); // numero de bloc
+        finter[i]->SetLineColor(4);
+        finter[i]->SetNpx(1100);
+
+        for (Int_t p = 0; p < maxwfpulses; p++)
+        {
+          wftime[i][p] = -100;
+          wfampl[i][p] = -100;
+        }
 
         hsig_i[i] = new TH1F(Form("hsig_i%d", i), Form("hsig_i%d", i), ntime, 0, ntime);
         hsig_i[i]->SetLineColor(1);
@@ -606,8 +523,6 @@ TEST_2(int run, int seg)
         hsig_i[i]->GetYaxis()->SetTitle("(mV)");
         hsig_i[i]->GetYaxis()->SetLabelSize(0.05);
 
-        pres[i] = 0;
-
         for (Int_t j = 0; j < ntime; j++)
         {
           signal[i][j] = 0;
@@ -615,13 +530,11 @@ TEST_2(int run, int seg)
 
       } // liste de presence des blocs! pres=0 si bloc absent, pres=1 s'il est present
 
-      // Extract the data from the complex variable SampWaveForm[] (NPS.cal.fly.adcSampWaveform)
+      // Extract the data from the variable SampWaveForm[] (NPS.cal.fly.adcSampWaveform)
 
       int ns = 0; // ns represent for a given event the element number of the NPS.cal.fly.adcSampWaveform variable
-      //    nb=0;
       while (ns < NSampWaveForm)
       {
-
         bloc = SampWaveForm[ns];
         ns++; // bloc number (actually the slot number)
         nsamp = SampWaveForm[ns];
@@ -648,90 +561,16 @@ TEST_2(int run, int seg)
           {
             for (Int_t it = 0; it < nsamp; it++)
             {
-
               if (bloc > -0.5 && bloc < nblocks)
               {
                 signal[bloc][it] = SampWaveForm[ns];
                 hsig_i[bloc]->SetBinContent(it + 1, signal[bloc][it]);
               }
-
               ns++;
             }
           }
-
         } // fin if(bloc number is good)
-
       } // fin while()
-
-      // Calculate the output variables of the rootfile
-
-      if (pres[454] == 0)
-        nb++;
-
-      // initialisation
-
-      Double_t enertot = 0.;
-      Double_t integtot = 0.;
-      Double_t corr_time_HMS = 0.;
-
-      Double_t timewf[nblocks];
-      Double_t amplwf[nblocks];
-      Double_t chi2[nblocks];
-      Double_t ener[nblocks];
-      Double_t integ[nblocks];
-      Double_t noise[nblocks];
-      Double_t bkg[nblocks];
-      Double_t sigmax[nblocks];
-      Double_t Sampampl[nblocks];
-      Double_t Sampped[nblocks];
-      Double_t Samptime[nblocks];
-      Double_t Sampener[nblocks];
-      Double_t Npulse[nblocks];
-
-      Int_t wfnpulse[nblocks];
-      Double_t wfampl[nblocks][maxwfpulses];
-      Double_t wftime[nblocks][maxwfpulses];
-      // not used but here they are anyway
-      Double_t ampl2[nblocks];
-      Double_t ampl[nblocks];
-      Double_t time[nblocks];
-      Double_t larg50[nblocks];
-      Double_t larg90[nblocks];
-      Double_t max50, max90, min50, min90;
-
-      for (Int_t i = 0; i < nblocks; i++)
-      {
-        timewf[i] = -100;
-        amplwf[i] = -100;
-        chi2[i] = -1;
-        ener[i] = 0;
-        integ[i] = 0;
-        noise[i] = 0;
-        bkg[i] = 0;
-        sigmax[i] = -100;
-        Sampampl[i] = -100;
-        Sampped[i] = -100;
-        Samptime[i] = -100;
-        Sampener[i] = -100;
-        Npulse[i] = 0;
-
-        finter[i] = new TF1(Form("finter_%d", i), func, -200, ntime + 200, nbparameters);
-        finter[i]->FixParameter(0, i); // numero de bloc
-        finter[i]->SetLineColor(4);
-        finter[i]->SetNpx(1100);
-      }
-
-      for (Int_t i = 0; i < nblocks; i++)
-      {
-        wfnpulse[i] = -100;
-
-        for (Int_t p = 0; p < maxwfpulses; p++)
-        {
-          wftime[i][p] = -100;
-          wfampl[i][p] = -100;
-        }
-      }
-      // End per-event intializations
 
       // Read the hcana calculated variables
 
@@ -739,22 +578,18 @@ TEST_2(int run, int seg)
 
       for (Int_t iNdata = 0; iNdata < NadcCounter; iNdata++)
       {
-
         if (adcCounter[iNdata] == 2000)
           adcCounter[iNdata] = 1080; // nouveau numero du scintillateur attribue par Malek
         if (adcCounter[iNdata] == 2001)
           adcCounter[iNdata] = 1081; // nouveau numero du scintillateur attribue par Malek
 
         // determine HMS time correction
-
         if (iNdata == 0)
         {
           corr_time_HMS = adcSampPulseTime[iNdata] - (adcSampPulseTimeRaw[iNdata] / 16.) - tdcoffset[(int)(adcCounter[iNdata])];
         }
-
         if (iNdata != 0)
         {
-
           if (TMath::Abs(corr_time_HMS - (adcSampPulseTime[iNdata] - adcSampPulseTimeRaw[iNdata] / 16. - tdcoffset[(int)(adcCounter[iNdata])])) > 0.001)
           {
             cout << "problem HMS time correction event " << evt << endl;
@@ -765,10 +600,8 @@ TEST_2(int run, int seg)
         {
           cout << "****** Problem adcCounter ******* " << evt << " " << iNdata << " " << adcCounter[iNdata] << endl;
         }
-
         if (adcCounter[iNdata] >= 0 && adcCounter[iNdata] < nblocks)
         {
-
           Npulse[(int)(adcCounter[iNdata])] += 1;
           hsig_i[(int)(adcCounter[iNdata])]->SetLineColor(2); // why are we doing this here??
 
@@ -779,13 +612,10 @@ TEST_2(int run, int seg)
             Sampener[(int)(adcCounter[iNdata])] = adcSampPulseInt[iNdata];
             Sampped[(int)(adcCounter[iNdata])] = adcSampPulsePed[iNdata];
           }
-
           if (Npulse[(int)(adcCounter[iNdata])] > 1)
           {
-
             if (TMath::Abs(Samptime[(int)(adcCounter[iNdata])] - timemean2[(int)(adcCounter[iNdata])]) > TMath::Abs(adcSampPulseTime[iNdata] - timemean2[(int)(adcCounter[iNdata])]))
             { // if the 2nd pulse is closer to the reference time than the 1st pulse then we take the 2nd
-
               Sampampl[(int)(adcCounter[iNdata])] = adcSampPulseAmp[iNdata];
               Samptime[(int)(adcCounter[iNdata])] = adcSampPulseTime[iNdata];
               Sampener[(int)(adcCounter[iNdata])] = adcSampPulseInt[iNdata];
@@ -799,25 +629,17 @@ TEST_2(int run, int seg)
 
       for (Int_t i = 0; i < nblocks; i++)
       {
-
-        // icol = i % ncol; //never used anywhere?
-        // ilin = (int)(i / ncol);
-
-        if (pres[i] == 1)
-        { // For this setting?
-
+        if (pres[i] == 1) // if this block is present during event
+        {
           for (Int_t it = 0; it < nsamp; it++)
           {
-
             hsig_i[i]->SetBinError(it + 1, TMath::Sqrt(TMath::Abs(hsig_i[i]->GetBinContent(it + 1) * 4.096)) / 4.096);
 
             if (hsig_i[i]->GetBinContent(it + 1) < 1.)
             {
-
               hsig_i[i]->SetBinError(it + 1, TMath::Sqrt(TMath::Abs(1. * 4.096)) / 4.096);
             }
-
-          } // end loop over it
+          }
 
           if (nsamp == ntime)
           {
@@ -863,7 +685,6 @@ TEST_2(int run, int seg)
 
             if (p > 0)
             {
-
               if (TMath::Abs(wftime[i][p] - timerefacc2 * dt) < TMath::Abs(timewf[i] - timerefacc2 * dt))
               {
                 timewf[i] = wftime[i][p];
@@ -875,10 +696,7 @@ TEST_2(int run, int seg)
         } // end of condition over col,lin
       } // end of loop over les blocs
 
-      // can all these differenet loops over block# be combined?????
-
-      // Calculation
-
+      // Calculation of some output branch variables
       for (Int_t i = 0; i < nblocks; i++)
       {
 
@@ -925,12 +743,8 @@ TEST_2(int run, int seg)
           } // RMS of the bkg
         }
         noise[i] = TMath::Sqrt(noise[i]);
-      }
 
-      // Calculation of signal widths
-      for (Int_t i = 0; i < nblocks; i++)
-      {
-
+        // Calculation of signal widths
         ampl2[i] = ampl[i] - bkg[i]; // amplitude of the pulse relatively to bkg
 
         max50 = 0;
@@ -939,8 +753,7 @@ TEST_2(int run, int seg)
         min90 = 100;
 
         for (Int_t it = time[i]; it < nsamp; it++)
-        {
-          // aller vers la droite du maximum
+        { // aller vers la droite du maximum
           if ((signal[i][it] - bkg[i]) >= ampl2[i] * 0.5)
           {
             max50 = it;
@@ -950,10 +763,8 @@ TEST_2(int run, int seg)
             max90 = it;
           }
         }
-
         for (Int_t it = time[i]; it > -0.5; it--)
         { // aller vers la gauche du maximum
-
           if ((signal[i][it] - bkg[i]) >= ampl2[i] * 0.5)
           {
             min50 = it;
@@ -973,25 +784,21 @@ TEST_2(int run, int seg)
         cout << "SampAmp=" << Sampampl[7] << "  ampl=" << ampl[7] << endl;
       }
 
-      treeout->Fill();
+      // Lambda returns a tuple of all the arrays to be written to dataframe. this replaces filling branches in ttree
+      return std::make_tuple(chi2, ampl, amplwf, wfnpulse, Sampampl, Samptime, timewf, enertot, integtot, pres, corr_time_HMS);
+      // treeout->Fill();
 
-      // std::cout << "we just filled the tree" << std::endl;
       // gObjectTable->Print();
 
     } // end if(NSampWaveForm<=Ndata)
-  }
 
-  // end of the cut over HMS
-
-  // After processing events, check the list of objects in memory
-
-  if (evt % 1000 == 0)
-  {
-    std::cout << "Objects in memory After event processing:" << std::endl;
-    gObjectTable->Print();
-  }
-
-  // end for(evt)
+    // After processing events, check the list of objects in memory
+    if (evt % 1000 == 0)
+    {
+      std::cout << "Objects in memory After event processing:" << std::endl;
+      gObjectTable->Print();
+    }
+  } // End of lambda (event loop)
 
   /////////////////////////////////////////////////////////////////////////////////////////
 
@@ -999,14 +806,25 @@ TEST_2(int run, int seg)
 
   /////// Write the output files //////////////////////////////////////////////////////////
 
-  for (int i = 0; i < nblocks; i++)
-  {
-    delete hsig_i[i];        // Delete histogram objects
-    delete finter[i];        // Delete fit function objects
-    delete interpolation[i]; // Delete interpolator objects
-  }
+  //Make output dataframe with columns as the output touple and all the arrays within
+  auto df_final = df.Define("touple", analyze, {"NSampWaveForm", "SampWaveForm", "evt", "NadcCounter", "adcCounter", "adcSampPulseTime", "adcSampPulseTimeRaw"});
+  df_final = df_final.Define("chi2",[](const auto& touple){return std::get<0>(touple); });
+  df_final = df_final.Define("ampl",[](const auto& touple){return std::get<1>(touple); });
+  df_final = df_final.Define("amplwf",[](const auto& touple){return std::get<2>(touple); });
+  df_final = df_final.Define("wfnpulse",[](const auto& touple){return std::get<3>(touple); });
+  df_final = df_final.Define("Sampampl",[](const auto& touple){return std::get<4>(touple); });
+  df_final = df_final.Define("Samptime",[](const auto& touple){return std::get<5>(touple); });
+  df_final = df_final.Define("tiomewf",[](const auto& touple){return std::get<6>(touple); });
+  df_final = df_final.Define("enertot",[](const auto& touple){return std::get<7>(touple); });
+  df_final = df_final.Define("integtot",[](const auto& touple){return std::get<8>(touple); });
+  df_final = df_final.Define("pres",[](const auto& touple){return std::get<9>(touple); });
+  df_final = df_final.Define("corr_time_HMS",[](const auto& touple){return std::get<10>(touple); });
 
-  // Then safely write and delete at the end
+  // Save the dataframe to the output ROOT file
+  df_final.Snapshot(treeout, fout);
+
+// Then safely write and delete at the end
+/*
   fout->cd();
   h1time->Write("h1time");
   h2time->Write("h2time");
@@ -1014,19 +832,9 @@ TEST_2(int run, int seg)
   delete h2time;
   fout->Write();
   fout->Close();
+*/
+  // TTree was never written to output file???
 
   cout << "fin de l'analyse" << endl;
   cout << nsampwf << " " << ndataprob << " " << nb << endl;
-
-  /*
-    fout->cd();
-    fout->Write();
-    h1time->Write("h1time");
-    h2time->Write("h2time");
-    histo->Write("histo");
-    delete histo;
-    delete h1time;
-    delete h2time;
-    fout->Close();
-  */
 }
