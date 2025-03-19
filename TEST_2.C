@@ -24,6 +24,7 @@
 #include <Math/Interpolator.h>
 #include <fstream>
 #include <TObjectTable.h>
+#include <ROOT/RDataFrame.hxx>
 
 const int ntime = 110;           // number of time samples for each fADC channel (100 for runs 55 and 56)
 const int nfADC = 7;             // number of fADC modules (16 channels each) used in this run
@@ -44,167 +45,9 @@ ROOT::Math::Interpolator *interpolation[nblocks]; // function used for the inter
 
 ///////////////////////////////////////////////////////////// FIT FUNCTION USED AND SCHEMATICS /////////////////////////////////////////////////////////////
 
-auto Fitwf = [&](Int_t bn)
-{
-  // Detect the pulses
-
-  wfnpulse[bn] = 0;
-  Int_t good = 0;
-
-  for (Int_t p = 0; p < maxwfpulses; p++)
-  {
-    // cout << "Setting parameters for pulse " << p << " with index " << 2+2*p << " and " << 3+2*p << endl;
-    wfampl[bn][p] = -1;
-  }
-
-  for (Int_t it = 0; it < ntime - 6; it++) // loop over number of samples(110) in an event for a given block
-  {
-    if (!finter[bn])
-    {
-      cout << " block=" << bn << " finter is nullptr" << endl;
-      return;
-    }
-    if (!hsig_i[bn])
-    {
-      cout << ", block=" << bn << " hsig_i is nullptr" << endl;
-      return;
-    }
-
-    // Condition over the number of samples in the pulse finding scheme
-    if (hsig_i[bn]->GetBinContent(it + 1) < hsig_i[bn]->GetBinContent(it + 2) && hsig_i[bn]->GetBinContent(it + 2) < hsig_i[bn]->GetBinContent(it + 3) && hsig_i[bn]->GetBinContent(it + 3) <= hsig_i[bn]->GetBinContent(it + 4) && hsig_i[bn]->GetBinContent(it + 4) >= hsig_i[bn]->GetBinContent(it + 5))
-    {
-      if (hsig_i[bn]->GetBinContent(it + 4) > 0)
-      {
-        // check if we exceeded the number of pulses
-        if (wfnpulse[bn] >= maxwfpulses)
-        {
-          cout << "Warning: wfnpulse[" << bn << "] exceeded maxwfpulses!" << endl;
-          //  wfnpulse[bn] = maxwfpulses - 1; // Prevent overflow
-        }
-
-        wfampl[bn][wfnpulse[bn]] = hsig_i[bn]->GetBinContent(it + 4); // get the amplitude of the pulse found
-
-        wftime[bn][wfnpulse[bn]] = hsig_i[bn]->GetBinCenter(it + 4); // get the time of the pulse found
-
-        // flag for the good pulse
-        if (TMath::Abs(wftime[bn][wfnpulse[bn]] - timeref[bn] - timerefacc) < 4.1)
-        {
-          good = 1;
-        }
-
-        wfnpulse[bn]++;
-
-        // to prevent overflow
-        if (wfnpulse[bn] == maxwfpulses)
-        {
-          wfnpulse[bn] = maxwfpulses - 1;
-          it = ntime;
-        }
-
-        it += 4;
-
-      } // end of the condition over (hsig_i[bn]->GetBinContent(it+4)>0){
-    } // end of the condition over samples
-  } // end of loop over it
-
-  if (wfnpulse[bn] > maxwfpulses - 2)
-  {
-    cout << "Warning : excessively high number of pulses in the block wf " << bn << endl;
-  }
-
-  // Adjust the parameters of the fit function
-
-  for (Int_t p = 0; p < maxwfpulses; p++)
-  {
-    finter[bn]->FixParameter(2 + 2 * p, 0.);
-    finter[bn]->FixParameter(3 + 2 * p, 0.);
-  }
-
-  if (wfnpulse[bn] > 0 && good == 1)
-  {
-    for (Int_t p = 0; p < TMath::Min(maxwfpulses, wfnpulse[bn]); p++)
-    {
-      finter[bn]->ReleaseParameter(2 + 2 * p);
-      finter[bn]->ReleaseParameter(3 + 2 * p);
-
-      finter[bn]->SetParameter(2 + 2 * p, wftime[bn][p] - timeref[bn]);
-      finter[bn]->SetParameter(3 + 2 * p, wfampl[bn][p]);
-
-      finter[bn]->SetParLimits(2 + 2 * p, wftime[bn][p] - timeref[bn] - 3, wftime[bn][p] - timeref[bn] + 3);
-      finter[bn]->SetParLimits(3 + 2 * p, wfampl[bn][p] * 0.2, wfampl[bn][p] * 3);
-    }
-  }
-
-  if (wfnpulse[bn] > 0 && good == 0)
-  {
-    for (Int_t p = 0; p < TMath::Min(maxwfpulses, wfnpulse[bn]); p++)
-    {
-      finter[bn]->ReleaseParameter(2 + 2 * p);
-      finter[bn]->ReleaseParameter(3 + 2 * p);
-
-      finter[bn]->SetParameter(2 + 2 * p, wftime[bn][p] - timeref[bn]);
-
-      // Check to debug
-      if (wfampl[bn][p] > 0)
-      { // Ensure it's positive before multiplying
-        finter[bn]->SetParLimits(3 + 2 * p, wfampl[bn][p] * 0.2, wfampl[bn][p] * 3);
-      }
-      else
-      {
-        cout << "Warning: wfampl[" << bn << "][" << p << "] is non-positive!" << endl;
-        // finter[bn]->SetParLimits(3 + 2 * p, 0.05, 10); // Set safe fallback limits
-      }
-
-      finter[bn]->SetParameter(3 + 2 * p, wfampl[bn][p]);
-
-      finter[bn]->SetParLimits(2 + 2 * p, wftime[bn][p] - timeref[bn] - 3, wftime[bn][p] - timeref[bn] + 3);
-      finter[bn]->SetParLimits(3 + 2 * p, wfampl[bn][p] * 0.2, wfampl[bn][p] * 3);
-    }
-
-    // On recherche quand meme un eventuel pulse en temps
-
-    finter[bn]->ReleaseParameter(2 + 2 * wfnpulse[bn]);
-    finter[bn]->ReleaseParameter(3 + 2 * wfnpulse[bn]);
-
-    finter[bn]->SetParameter(2 + 2 * wfnpulse[bn], timerefacc);
-    finter[bn]->SetParameter(3 + 2 * wfnpulse[bn], 2);
-
-    finter[bn]->SetParLimits(2 + 2 * wfnpulse[bn], timerefacc - 4, timerefacc + 4);
-    finter[bn]->SetParLimits(3 + 2 * wfnpulse[bn], 0.05, 10);
-
-    wfnpulse[bn]++;
-  }
-
-  if (wfnpulse[bn] == 0)
-  {
-    for (Int_t p = 0; p < 1; p++)
-    {
-      finter[bn]->ReleaseParameter(2 + 2 * p);
-      finter[bn]->ReleaseParameter(3 + 2 * p);
-
-      finter[bn]->SetParameter(2 + 2 * p, timerefacc);
-      finter[bn]->SetParameter(3 + 2 * p, 2);
-
-      finter[bn]->SetParLimits(2 + 2 * p, timerefacc - 4, timerefacc + 4);
-      finter[bn]->SetParLimits(3 + 2 * p, 0.05, 10);
-    }
-
-    wfnpulse[bn]++;
-  }
-
-  finter[bn]->SetParameter(1, 0.);
-  finter[bn]->SetParLimits(1, -100, 100.);
-
-  // hsig_i[bn]->Fit(Form("finter_%d",bn),"Q","",TMath::Max(0.,wftime[bn][0]-20),ntime);
-  // File << "Checkpoint: Before fitting function for bn = " << bn << endl;
-
-  hsig_i[bn]->Fit(Form("finter_%d", bn), "Q", "", 0., ntime);
-}
-
 /////////////////////////////////////////////////////////////MAIN FUNCTION ///////////////////////////////////////////////////////////////////////
 
-void
-TEST_2(int run, int seg)
+void TEST_2(int run, int seg)
 {
 
   // FIT FUNCTION redefined as a lambda function for MT use
@@ -231,7 +74,7 @@ TEST_2(int run, int seg)
 
   // BUILD TCHAIN
   TChain chain("T");
-  TString fname = Form("/cache/hallc/c-nps/analysis/online/replays/nps_hms_coin_%d_%d_1_-1.root", run, seg);
+  TString filename = Form("/cache/hallc/c-nps/analysis/online/replays/nps_hms_coin_%d_%d_1_-1.root", run, seg);
   TFile *testOpen = TFile::Open(filename);
   if (!testOpen || testOpen->IsZombie())
   {
@@ -239,7 +82,7 @@ TEST_2(int run, int seg)
     return;
   }
   testOpen->Close();
-  chain.Add(fname);
+  chain.Add(filename);
   auto nEntries = chain.GetEntries(); // replaced wassims nentries
   std::cout << "Chain has " << nEntries << " entries.\n";
 
@@ -263,10 +106,6 @@ TEST_2(int run, int seg)
   const int Ndata = nslots * (ntime + 1 + 1);          //(1104 slots fADC au total mais pas tous utilises y compris 2 PM scintillateurs?) should correspond to Ndata.NPS.cal.fly.adcSampWaveform variable in the root file
   Double_t ADCtomV = 1000. / 4096;                     // 1000 mV correspond a 4096 canaux
   Double_t integtopC = (1. / 4096) * (dt * 1.e3 / 50); // (1 V / 4096 adc channels) * (4000 ps time sample / 50 ohms input resistance) = 0.020 pc/channel
-
-  // where the cosmic pulse is expected to be
-  Int_t binmin;
-  Int_t binmax;
 
   // Read reference waveforms
   const int nbparameters = 2 + 2 * maxwfpulses;
@@ -357,65 +196,67 @@ TEST_2(int run, int seg)
   }
 
   // Load only required branches into dataframe
-  auto df = df.Define("NSampWaveForm", "Ndata.NPS.cal.fly.adcSampWaveform")
-                .Define("SampWaveForm", "NPS.cal.fly.adcSampWaveform")
-                .Define("NadcCounter", "Ndata.NPS.cal.fly.adcCounter")
-                .Define("adcCounter", "NPS.cal.fly.adcCounter")
-                .Define("NadcSampPulseAmp", "Ndata.NPS.cal.fly.adcSampPulseAmp")
-                .Define("adcSampPulseAmp", "NPS.cal.fly.adcSampPulseAmp")
-                .Define("NadcSampPulseInt", "Ndata.NPS.cal.fly.adcSampPulseInt")
-                .Define("adcSampPulseInt", "NPS.cal.fly.adcSampPulseInt")
-                .Define("NadcSampPulsePed", "Ndata.NPS.cal.fly.adcSampPulsePed")
-                .Define("adcSampPulsePed", "NPS.cal.fly.adcSampPulsePed")
-                .Define("NadcSampPulseTime", "Ndata.NPS.cal.fly.adcSampPulseTime")
-                .Define("adcSampPulseTime", "NPS.cal.fly.adcSampPulseTime")
-                .Define("NadcSampPulseTimeRaw", "Ndata.NPS.cal.fly.adcSampPulseTimeRaw")
-                .Define("adcSampPulseTimeRaw", "NPS.cal.fly.adcSampPulseTimeRaw")
-                .Define("hT1_tdcTime", "T.hms.hT1_tdcTime")
-                .Define("hT2_tdcTime", "T.hms.hT2_tdcTime")
-                .Define("hT3_tdcTime", "T.hms.hT3_tdcTime")
-                .Define("hTRIG1_tdcTime", "T.hms.hTRIG1_tdcTime")
-                .Define("hTRIG2_tdcTime", "T.hms.hTRIG2_tdcTime")
-                .Define("hTRIG3_tdcTime", "T.hms.hTRIG3_tdcTime")
-                .Define("hTRIG4_tdcTime", "T.hms.hTRIG4_tdcTime")
-                .Define("hTRIG5_tdcTime", "T.hms.hTRIG5_tdcTime")
-                .Define("hTRIG6_tdcTime", "T.hms.hTRIG6_tdcTime")
-                .Define("beta", "beta")
-                .Define("cernpeSum", "cernpeSum")
-                .Define("caletracknorm", "caletracknorm")
-                .Define("caletottracknorm", "caletottracknorm")
-                .Define("caletotnorm", "caletotnorm")
-                .Define("vx", "H.react.x")
-                .Define("vy", "H.react.y")
-                .Define("vz", "H.react.z")
-                .Define("dp", "H.gtr.dp")
-                .Define("th", "H.gtr.th")
-                .Define("ph", "H.gtr.ph")
-                .Define("px", "H.gtr.px")
-                .Define("py", "H.gtr.py")
-                .Define("pz", "H.gtr.pz")
-                .Define("cernpe", "H.cer.npeSum")
-                .Define("caltracknorm", "H.cal.etottracknorm");
-  .Define("evt", "rdfentry_"); // define event number from row of rdataframe for troubleshoooting (threadsafe)
+  auto df2 = df.Define("NSampWaveForm", "Ndata.NPS.cal.fly.adcSampWaveform")
+                 .Define("SampWaveForm", "NPS.cal.fly.adcSampWaveform")
+                 .Define("NadcCounter", "Ndata.NPS.cal.fly.adcCounter")
+                 .Define("adcCounter", "NPS.cal.fly.adcCounter")
+                 .Define("NadcSampPulseAmp", "Ndata.NPS.cal.fly.adcSampPulseAmp")
+                 .Define("adcSampPulseAmp", "NPS.cal.fly.adcSampPulseAmp")
+                 .Define("NadcSampPulseInt", "Ndata.NPS.cal.fly.adcSampPulseInt")
+                 .Define("adcSampPulseInt", "NPS.cal.fly.adcSampPulseInt")
+                 .Define("NadcSampPulsePed", "Ndata.NPS.cal.fly.adcSampPulsePed")
+                 .Define("adcSampPulsePed", "NPS.cal.fly.adcSampPulsePed")
+                 .Define("NadcSampPulseTime", "Ndata.NPS.cal.fly.adcSampPulseTime")
+                 .Define("adcSampPulseTime", "NPS.cal.fly.adcSampPulseTime")
+                 .Define("NadcSampPulseTimeRaw", "Ndata.NPS.cal.fly.adcSampPulseTimeRaw")
+                 .Define("adcSampPulseTimeRaw", "NPS.cal.fly.adcSampPulseTimeRaw")
+                 .Define("hT1_tdcTime", "T.hms.hT1_tdcTime")
+                 .Define("hT2_tdcTime", "T.hms.hT2_tdcTime")
+                 .Define("hT3_tdcTime", "T.hms.hT3_tdcTime")
+                 .Define("hTRIG1_tdcTime", "T.hms.hTRIG1_tdcTime")
+                 .Define("hTRIG2_tdcTime", "T.hms.hTRIG2_tdcTime")
+                 .Define("hTRIG3_tdcTime", "T.hms.hTRIG3_tdcTime")
+                 .Define("hTRIG4_tdcTime", "T.hms.hTRIG4_tdcTime")
+                 .Define("hTRIG5_tdcTime", "T.hms.hTRIG5_tdcTime")
+                 .Define("hTRIG6_tdcTime", "T.hms.hTRIG6_tdcTime")
+                 .Define("beta", "beta")
+                 .Define("cernpeSum", "cernpeSum")
+                 .Define("caletracknorm", "caletracknorm")
+                 .Define("caletottracknorm", "caletottracknorm")
+                 .Define("caletotnorm", "caletotnorm")
+                 .Define("vx", "H.react.x")
+                 .Define("vy", "H.react.y")
+                 .Define("vz", "H.react.z")
+                 .Define("dp", "H.gtr.dp")
+                 .Define("th", "H.gtr.th")
+                 .Define("ph", "H.gtr.ph")
+                 .Define("px", "H.gtr.px")
+                 .Define("py", "H.gtr.py")
+                 .Define("pz", "H.gtr.pz")
+                 .Define("cernpe", "H.cer.npeSum")
+                 .Define("caltracknorm", "H.cal.etottracknorm")
+                 .Define("evt", "rdfentry_") // define event number from row of rdataframe for troubleshoooting (threadsafe)
+                 .Filter("TMath::Abs(H.gtr.th) < 0.08")
+                 .Filter("TMath::Abs(H.gtr.ph) < 0.04")
+                 .Filter("TMath::Abs(H.gtr.dp) < 10");
 
   // Output rootfile
+  /*
+    TFile *fout;
+    Int_t tracage = 0; // 1 to see the waveforms event by event
+    if (tracage == 0)
+    {
+      TString rootfilePath = Form("nps_production_%d_%d.root", run, seg);
 
-  TFile *fout;
-  Int_t tracage = 0; // 1 to see the waveforms event by event
-  if (tracage == 0)
-  {
-    TString rootfilePath = Form("nps_production_%d_%d.root", run, seg);
+      cout << "Rootfile location: " << rootfilePath << endl;
+      fout = new TFile(rootfilePath, "recreate");
+    }
 
-    cout << "Rootfile location: " << rootfilePath << endl;
-    fout = new TFile(rootfilePath, "recreate");
-  }
-
-  TTree *treeout = new TTree("T", "Tree organized");
-  treeout->SetAutoFlush(-300000000);
-
+    TTree *treeout = new TTree("T", "Tree organized");
+    treeout->SetAutoFlush(-300000000);
+  */
   // Other variables
   Int_t ilinc, icolc, inp;
-  Int_t nsampwf = 0;
   Int_t ndataprob = 0;
 
   TLatex *tex = new TLatex();
@@ -431,7 +272,6 @@ TEST_2(int run, int seg)
   } // 1st pass analysis, when the macro analyse_wassim.C is not executed yet (30 is the default value)
   // 2nd pass analysis, when the macro analyse_wassim.C is already executed. If not, comment the following lines
 
-
   /////TODO: convert all needed treeout histos to df.Histo1D() and add to dataframe
   TH1F *h1time = new TH1F("h1time", "pulse (>20mV) shift (4*ns units) relatively to elastic refwf (all found pulses included)", 200, -50, 50);
   TH1F *h2time = new TH1F("h2time", "pulse (>20mV) time (ns) (all found pulses included)", 200, -100, 100);
@@ -441,12 +281,13 @@ TEST_2(int run, int seg)
   // this is where sequential event loop was
 
   // HMS CUTS
-  auto df = df.Filter(TMath::Abs(th) < 0.08)
-                .Filter(Math::Abs(ph) < 0.04)
-                .Filter(TMath::Abs(dp) < 10);
-
+  /*
+  df2 = df2.Filter("TMath::Abs(H.gtr.th) < 0.08")
+            .Filter("TMath::Abs(H.gtr.ph) < 0.04")
+            .Filter("TMath::Abs(H.gtr.dp) < 10");
+*/
   ////////Lambda funtion for the per-event wf analysis/////////
-  auto analyze = [=](Int_t NSampWaveForm, const std::vector<Double_t> &SampWaveForm, Int_t evt, Int_t NadcCounter, const std::vector<Int_t> &adcCounter, const std::vector<Double_t> adcSampPulseTime, const std::vector<Double_t> adcSampPulseTimeRaw)
+  auto analyze = [=](Int_t NSampWaveForm, const std::vector<Double_t> &SampWaveForm, Int_t evt, Int_t NadcCounter, std::vector<Int_t> &adcCounter, const std::vector<Double_t> adcSampPulseTime, const std::vector<Double_t> adcSampPulseTimeRaw)
   {
     TF1 *finter[nblocks];
     TH1F *hsig_i[nblocks];
@@ -471,6 +312,7 @@ TEST_2(int run, int seg)
     Double_t Samptime[nblocks] = {-100};
     Double_t Sampener[nblocks];
     Double_t Npulse[nblocks];
+    Int_t nsampwf = 0;
 
     Int_t wfnpulse[nblocks] = {-100};
     Double_t wfampl[nblocks][maxwfpulses];
@@ -482,6 +324,167 @@ TEST_2(int run, int seg)
     Double_t larg50[nblocks];
     Double_t larg90[nblocks];
     Double_t max50, max90, min50, min90;
+    // where the cosmic pulse is expected to be
+    Int_t binmin;
+    Int_t binmax;
+
+    // The fit function need to be moved into the scope of analyze to capture all variables (wfnpulse)
+    auto Fitwf = [&wfnpulse, &wfampl, &finter, &hsig_i, &wftime](Int_t bn)
+    {
+      // Detect the pulses
+
+      wfnpulse[bn] = 0;
+      Int_t good = 0;
+
+      for (Int_t p = 0; p < maxwfpulses; p++)
+      {
+        // cout << "Setting parameters for pulse " << p << " with index " << 2+2*p << " and " << 3+2*p << endl;
+        wfampl[bn][p] = -1;
+      }
+
+      for (Int_t it = 0; it < ntime - 6; it++) // loop over number of samples(110) in an event for a given block
+      {
+        if (!finter[bn])
+        {
+          cout << " block=" << bn << " finter is nullptr" << endl;
+          return;
+        }
+        if (!hsig_i[bn])
+        {
+          cout << ", block=" << bn << " hsig_i is nullptr" << endl;
+          return;
+        }
+
+        // Condition over the number of samples in the pulse finding scheme
+        if (hsig_i[bn]->GetBinContent(it + 1) < hsig_i[bn]->GetBinContent(it + 2) && hsig_i[bn]->GetBinContent(it + 2) < hsig_i[bn]->GetBinContent(it + 3) && hsig_i[bn]->GetBinContent(it + 3) <= hsig_i[bn]->GetBinContent(it + 4) && hsig_i[bn]->GetBinContent(it + 4) >= hsig_i[bn]->GetBinContent(it + 5))
+        {
+          if (hsig_i[bn]->GetBinContent(it + 4) > 0)
+          {
+            // check if we exceeded the number of pulses
+            if (wfnpulse[bn] >= maxwfpulses)
+            {
+              cout << "Warning: wfnpulse[" << bn << "] exceeded maxwfpulses!" << endl;
+              //  wfnpulse[bn] = maxwfpulses - 1; // Prevent overflow
+            }
+
+            wfampl[bn][wfnpulse[bn]] = hsig_i[bn]->GetBinContent(it + 4); // get the amplitude of the pulse found
+
+            wftime[bn][wfnpulse[bn]] = hsig_i[bn]->GetBinCenter(it + 4); // get the time of the pulse found
+
+            // flag for the good pulse
+            if (TMath::Abs(wftime[bn][wfnpulse[bn]] - timeref[bn] - timerefacc) < 4.1)
+            {
+              good = 1;
+            }
+
+            wfnpulse[bn]++;
+
+            // to prevent overflow
+            if (wfnpulse[bn] == maxwfpulses)
+            {
+              wfnpulse[bn] = maxwfpulses - 1;
+              it = ntime;
+            }
+
+            it += 4;
+
+          } // end of the condition over (hsig_i[bn]->GetBinContent(it+4)>0){
+        } // end of the condition over samples
+      } // end of loop over it
+
+      if (wfnpulse[bn] > maxwfpulses - 2)
+      {
+        cout << "Warning : excessively high number of pulses in the block wf " << bn << endl;
+      }
+
+      // Adjust the parameters of the fit function
+
+      for (Int_t p = 0; p < maxwfpulses; p++)
+      {
+        finter[bn]->FixParameter(2 + 2 * p, 0.);
+        finter[bn]->FixParameter(3 + 2 * p, 0.);
+      }
+
+      if (wfnpulse[bn] > 0 && good == 1)
+      {
+        for (Int_t p = 0; p < TMath::Min(maxwfpulses, wfnpulse[bn]); p++)
+        {
+          finter[bn]->ReleaseParameter(2 + 2 * p);
+          finter[bn]->ReleaseParameter(3 + 2 * p);
+
+          finter[bn]->SetParameter(2 + 2 * p, wftime[bn][p] - timeref[bn]);
+          finter[bn]->SetParameter(3 + 2 * p, wfampl[bn][p]);
+
+          finter[bn]->SetParLimits(2 + 2 * p, wftime[bn][p] - timeref[bn] - 3, wftime[bn][p] - timeref[bn] + 3);
+          finter[bn]->SetParLimits(3 + 2 * p, wfampl[bn][p] * 0.2, wfampl[bn][p] * 3);
+        }
+      }
+
+      if (wfnpulse[bn] > 0 && good == 0)
+      {
+        for (Int_t p = 0; p < TMath::Min(maxwfpulses, wfnpulse[bn]); p++)
+        {
+          finter[bn]->ReleaseParameter(2 + 2 * p);
+          finter[bn]->ReleaseParameter(3 + 2 * p);
+
+          finter[bn]->SetParameter(2 + 2 * p, wftime[bn][p] - timeref[bn]);
+
+          // Check to debug
+          if (wfampl[bn][p] > 0)
+          { // Ensure it's positive before multiplying
+            finter[bn]->SetParLimits(3 + 2 * p, wfampl[bn][p] * 0.2, wfampl[bn][p] * 3);
+          }
+          else
+          {
+            cout << "Warning: wfampl[" << bn << "][" << p << "] is non-positive!" << endl;
+            // finter[bn]->SetParLimits(3 + 2 * p, 0.05, 10); // Set safe fallback limits
+          }
+
+          finter[bn]->SetParameter(3 + 2 * p, wfampl[bn][p]);
+
+          finter[bn]->SetParLimits(2 + 2 * p, wftime[bn][p] - timeref[bn] - 3, wftime[bn][p] - timeref[bn] + 3);
+          finter[bn]->SetParLimits(3 + 2 * p, wfampl[bn][p] * 0.2, wfampl[bn][p] * 3);
+        }
+
+        // On recherche quand meme un eventuel pulse en temps
+
+        finter[bn]->ReleaseParameter(2 + 2 * wfnpulse[bn]);
+        finter[bn]->ReleaseParameter(3 + 2 * wfnpulse[bn]);
+
+        finter[bn]->SetParameter(2 + 2 * wfnpulse[bn], timerefacc);
+        finter[bn]->SetParameter(3 + 2 * wfnpulse[bn], 2);
+
+        finter[bn]->SetParLimits(2 + 2 * wfnpulse[bn], timerefacc - 4, timerefacc + 4);
+        finter[bn]->SetParLimits(3 + 2 * wfnpulse[bn], 0.05, 10);
+
+        wfnpulse[bn]++;
+      }
+
+      if (wfnpulse[bn] == 0)
+      {
+        for (Int_t p = 0; p < 1; p++)
+        {
+          finter[bn]->ReleaseParameter(2 + 2 * p);
+          finter[bn]->ReleaseParameter(3 + 2 * p);
+
+          finter[bn]->SetParameter(2 + 2 * p, timerefacc);
+          finter[bn]->SetParameter(3 + 2 * p, 2);
+
+          finter[bn]->SetParLimits(2 + 2 * p, timerefacc - 4, timerefacc + 4);
+          finter[bn]->SetParLimits(3 + 2 * p, 0.05, 10);
+        }
+
+        wfnpulse[bn]++;
+      }
+
+      finter[bn]->SetParameter(1, 0.);
+      finter[bn]->SetParLimits(1, -100, 100.);
+
+      // hsig_i[bn]->Fit(Form("finter_%d",bn),"Q","",TMath::Max(0.,wftime[bn][0]-20),ntime);
+      // File << "Checkpoint: Before fitting function for bn = " << bn << endl;
+
+      hsig_i[bn]->Fit(Form("finter_%d", bn), "Q", "", 0., ntime);
+    };
 
     if (NSampWaveForm > Ndata)
     {
@@ -798,7 +801,7 @@ TEST_2(int run, int seg)
       std::cout << "Objects in memory After event processing:" << std::endl;
       gObjectTable->Print();
     }
-  } // End of lambda (event loop)
+  }; // End of lambda (event loop)
 
   /////////////////////////////////////////////////////////////////////////////////////////
 
@@ -806,35 +809,47 @@ TEST_2(int run, int seg)
 
   /////// Write the output files //////////////////////////////////////////////////////////
 
-  //Make output dataframe with columns as the output touple and all the arrays within
-  auto df_final = df.Define("touple", analyze, {"NSampWaveForm", "SampWaveForm", "evt", "NadcCounter", "adcCounter", "adcSampPulseTime", "adcSampPulseTimeRaw"});
-  df_final = df_final.Define("chi2",[](const auto& touple){return std::get<0>(touple); });
-  df_final = df_final.Define("ampl",[](const auto& touple){return std::get<1>(touple); });
-  df_final = df_final.Define("amplwf",[](const auto& touple){return std::get<2>(touple); });
-  df_final = df_final.Define("wfnpulse",[](const auto& touple){return std::get<3>(touple); });
-  df_final = df_final.Define("Sampampl",[](const auto& touple){return std::get<4>(touple); });
-  df_final = df_final.Define("Samptime",[](const auto& touple){return std::get<5>(touple); });
-  df_final = df_final.Define("tiomewf",[](const auto& touple){return std::get<6>(touple); });
-  df_final = df_final.Define("enertot",[](const auto& touple){return std::get<7>(touple); });
-  df_final = df_final.Define("integtot",[](const auto& touple){return std::get<8>(touple); });
-  df_final = df_final.Define("pres",[](const auto& touple){return std::get<9>(touple); });
-  df_final = df_final.Define("corr_time_HMS",[](const auto& touple){return std::get<10>(touple); });
+  // Make output dataframe with columns as the output touple and all the arrays within
+  auto df_final = df2.Define("touple", analyze, {"NSampWaveForm", "SampWaveForm", "evt", "NadcCounter", "adcCounter", "adcSampPulseTime", "adcSampPulseTimeRaw"});
+  df_final = df_final.Define("chi2", [](const auto &touple)
+                             { return std::get<0>(touple); });
+  df_final = df_final.Define("ampl", [](const auto &touple)
+                             { return std::get<1>(touple); });
+  df_final = df_final.Define("amplwf", [](const auto &touple)
+                             { return std::get<2>(touple); });
+  df_final = df_final.Define("wfnpulse", [](const auto &touple)
+                             { return std::get<3>(touple); });
+  df_final = df_final.Define("Sampampl", [](const auto &touple)
+                             { return std::get<4>(touple); });
+  df_final = df_final.Define("Samptime", [](const auto &touple)
+                             { return std::get<5>(touple); });
+  df_final = df_final.Define("tiomewf", [](const auto &touple)
+                             { return std::get<6>(touple); });
+  df_final = df_final.Define("enertot", [](const auto &touple)
+                             { return std::get<7>(touple); });
+  df_final = df_final.Define("integtot", [](const auto &touple)
+                             { return std::get<8>(touple); });
+  df_final = df_final.Define("pres", [](const auto &touple)
+                             { return std::get<9>(touple); });
+  df_final = df_final.Define("corr_time_HMS", [](const auto &touple)
+                             { return std::get<10>(touple); });
 
   // Save the dataframe to the output ROOT file
-  df_final.Snapshot(treeout, fout);
+  TString rootfilePath = Form("nps_production_%d_%d.root", run, seg);
+  df_final.Snapshot("treeout", rootfilePath);
 
-// Then safely write and delete at the end
-/*
-  fout->cd();
-  h1time->Write("h1time");
-  h2time->Write("h2time");
-  delete h1time;
-  delete h2time;
-  fout->Write();
-  fout->Close();
-*/
+  // Then safely write and delete at the end
+  /*
+    fout->cd();
+    h1time->Write("h1time");
+    h2time->Write("h2time");
+    delete h1time;
+    delete h2time;
+    fout->Write();
+    fout->Close();
+  */
   // TTree was never written to output file???
 
   cout << "fin de l'analyse" << endl;
-  cout << nsampwf << " " << ndataprob << " " << nb << endl;
+  cout << nsampwf << " " << ndataprob << endl;
 }
