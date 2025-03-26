@@ -26,6 +26,9 @@
 #include <TObjectTable.h>
 #include <ROOT/RDataFrame.hxx>
 #include <vector>
+#include <TH1.h> 
+#include <ROOT/RDF/HistoModels.hxx> 
+
 
 template <typename T>
 void checkType(const T &obj)
@@ -75,13 +78,15 @@ void TEST_2(int run, int seg)
 
   // ENABLE MT
   const int nthreads = 8; // or any number
-  //ROOT::EnableImplicitMT(nthreads);
+  ROOT::EnableImplicitMT(nthreads);
   std::cout << "Implicit MT enabled: " << ROOT::IsImplicitMTEnabled() << "\n";
   std::cout << "Number of threads: " << ROOT::GetThreadPoolSize() << "\n";
 
   // BUILD TCHAIN
   TChain chain("T");
-  TString filename = Form("/cache/hallc/c-nps/analysis/online/replays/nps_hms_coin_%d_%d_1_-1.root", run, seg);
+  //TString filename = Form("/cache/hallc/c-nps/analysis/online/replays/nps_hms_coin_%d_%d_1_-1.root", run, seg);
+  //TString filename = Form("/mss/hallc/c-nps/analysis/online/replays/nps_hms_coin_%d_%d_1_-1.root", run, seg);
+  TString filename = Form("../nps_hms_coin_%d_%d_1_-1.root", run, seg);
   TFile *testOpen = TFile::Open(filename);
   if (!testOpen || testOpen->IsZombie())
   {
@@ -90,7 +95,7 @@ void TEST_2(int run, int seg)
   }
   testOpen->Close();
   chain.Add(filename);
-  auto nEntries = chain.GetEntries(); // replaced wassims nentries
+  auto nEntries = chain.GetEntries(); 
   std::cout << "Chain has " << nEntries << " entries.\n";
   
   // Before processing events, check the list of objects in memory
@@ -101,13 +106,10 @@ void TEST_2(int run, int seg)
   ROOT::RDataFrame df(chain);
   auto nEntriesDF = df.Count().GetValue();
   std::cout << "Dataframe has " << nEntriesDF << " entries.\n";
-  auto nEventsToProcess = nEntriesDF / 100;
-  //auto ogcolumns = df.GetColumnNames();
 
   // Define a new RDataFrame that processes only 1% of the events
-  auto df1percent = df.Range(0, nEventsToProcess);
-  // Flatten the waveforms to handle multiple per entry
-  // auto dfFlattened = df.Define("single_waveform", "Flatten(waveform)");
+  auto nEventsToProcess = nEntriesDF / 1000;
+  //auto df1percent = df.Range(0, nEventsToProcess);
 
   if (run == 2016)
   {
@@ -209,7 +211,7 @@ void TEST_2(int run, int seg)
   }
 
   // Load only required branches into dataframe
-  auto df2 = df1percent.Define("NSampWaveForm", "Ndata.NPS.cal.fly.adcSampWaveform")
+  auto df2 = df.Define("NSampWaveForm", "Ndata.NPS.cal.fly.adcSampWaveform")
                  .Define("SampWaveForm", "NPS.cal.fly.adcSampWaveform")
                  .Define("NadcCounter", "Ndata.NPS.cal.fly.adcCounter")
                  .Define("adcCounter", "NPS.cal.fly.adcCounter")
@@ -247,47 +249,13 @@ void TEST_2(int run, int seg)
                  .Define("pz", "H.gtr.pz")
                  .Define("cernpe", "H.cer.npeSum")
                  .Define("caltracknorm", "H.cal.etottracknorm")
-                 .Define("evt", "rdfentry_") // define event number from row of rdataframe for troubleshoooting (threadsafe)
+                 //.Define("evt", "rdfentry_") // define event number from row of rdataframe for troubleshoooting (threadsafe)
+                 .Define("evt", "g.evnum") // define event number from row of rdataframe for troubleshoooting (threadsafe)
                  .Filter("TMath::Abs(H.gtr.th) < 0.08")
                  .Filter("TMath::Abs(H.gtr.ph) < 0.04")
                  .Filter("TMath::Abs(H.gtr.dp) < 10");
 
-  // make a function to flatten out varaibles in tree that were arrays for each event
-  /*
-  auto flatten = [&nblocks](const std::vector<Double_t> &adcSampPulseAmp)
-  {
-    std::vector<Double_t> flattened;
-    for (int i = 0; i < nblocks; ++i)
-    {
-      flattened.push_back(adcSampPulseAmp[i]);
-    }
-    return flattened;
-  };
-  */
-  /*
-   auto df2_flattened = df2;
-   for (int i = 0; i < nblocks; ++i) {
-       std::string column_name = "adcSampPulseAmp_" + std::to_string(i);
-       df2_flattened = df2_flattened.Define(column_name, [i](const std::vector<Double_t>& adcSampPulseAmp) {
-           return adcSampPulseAmp[i];
-       });
-   }
- */
   // Output rootfile
-  /*
-    TFile *fout;
-    Int_t tracage = 0; // 1 to see the waveforms event by event
-    if (tracage == 0)
-    {
-      TString rootfilePath = Form("nps_production_%d_%d.root", run, seg);
-
-      cout << "Rootfile location: " << rootfilePath << endl;
-      fout = new TFile(rootfilePath, "recreate");
-    }
-
-    TTree *treeout = new TTree("T", "Tree organized");
-    treeout->SetAutoFlush(-300000000);
-  */
   // Other variables
   Int_t ilinc, icolc, inp;
   Int_t ndataprob = 0;
@@ -306,23 +274,32 @@ void TEST_2(int run, int seg)
   // 2nd pass analysis, when the macro analyse_wassim.C is already executed. If not, comment the following lines
 
   /////TODO: convert all needed treeout histos to df.Histo1D() and add to dataframe
-  TH1F *h1time = new TH1F("h1time", "pulse (>20mV) shift (4*ns units) relatively to elastic refwf (all found pulses included)", 200, -50, 50);
-  TH1F *h2time = new TH1F("h2time", "pulse (>20mV) time (ns) (all found pulses included)", 200, -100, 100);
+  //TH1F *h1time = new TH1F("h1time", "pulse (>20mV) shift (4*ns units) relatively to elastic refwf (all found pulses included)", 200, -50, 50);
+  //TH1F *h2time = new TH1F("h2time", "pulse (>20mV) time (ns) (all found pulses included)", 200, -100, 100);
+
+
+  ROOT::RDF::TH1DModel m_h1time("h1time", "pulse (>20mV) shift (4*ns units) relatively to elastic refwf (all found pulses included)", 200, -50, 50);
+  ROOT::RDF::TH1DModel m_h2time("h2time", "pulse (>20mV) time (ns) (all found pulses included)", 200, -100, 100);
+ 
+ //Fill with finter[blocknum]->GetParameter(2 + 2 * p), 1.) and wfttime[blocknumn][numpulses] 
+  // auto h1time = df2.Histo1D(m_h1time ,"");
+// auto h2time = df2.Histo1D(m_h2time ,"");
+
+
 
   /////// ANALYZE //////////////////////////////////////////////////////////
 
   // this is where sequential event loop was
 
   // HMS CUTS
-  /*
+/*
   df2 = df2.Filter("TMath::Abs(H.gtr.th) < 0.08")
             .Filter("TMath::Abs(H.gtr.ph) < 0.04")
             .Filter("TMath::Abs(H.gtr.dp) < 10");
+
 */
   ////////Lambda funtion for the per-event wf analysis/////////
- // auto analyze = [=](Int_t NSampWaveForm, const std::vector<Double_t> &SampWaveForm, Int_t evt, Int_t NadcCounter, std::vector<Int_t> &adcCounter, const std::vector<Double_t> adcSampPulseTime, const std::vector<Double_t> adcSampPulseTimeRaw, const std::vector<Double_t> adcSampPulseAmp, const std::vector<Double_t> adcSampPulseInt, const std::vector<Double_t> adcSampPulsePed)
-  
-  auto analyze = [=](Int_t NSampWaveForm, const ROOT::VecOps::RVec<Double_t> &SampWaveForm, ULong64_t evt, Int_t NadcCounter, ROOT::VecOps::RVec<Double_t> &adcCounter, const ROOT::VecOps::RVec<Double_t> adcSampPulseTime, const ROOT::VecOps::RVec<Double_t> adcSampPulseTimeRaw, const ROOT::VecOps::RVec<Double_t> adcSampPulseAmp, const ROOT::VecOps::RVec<Double_t> adcSampPulseInt, const ROOT::VecOps::RVec<Double_t> adcSampPulsePed)
+  auto analyze = [=](Int_t NSampWaveForm, const ROOT::VecOps::RVec<Double_t> &SampWaveForm, Double_t evt, Int_t NadcCounter, ROOT::VecOps::RVec<Double_t> &adcCounter, const ROOT::VecOps::RVec<Double_t> adcSampPulseTime, const ROOT::VecOps::RVec<Double_t> adcSampPulseTimeRaw, const ROOT::VecOps::RVec<Double_t> adcSampPulseAmp, const ROOT::VecOps::RVec<Double_t> adcSampPulseInt, const ROOT::VecOps::RVec<Double_t> adcSampPulsePed)
   {
     TF1 *finter[nblocks];
     TH1F *hsig_i[nblocks];
@@ -335,33 +312,30 @@ void TEST_2(int run, int seg)
     Double_t integtot = 0.;
     Double_t corr_time_HMS = 0.;
 
-   // Double_t timewf[nblocks] = {-100};
     std::vector<Double_t> timewf(nblocks, -100);
-    // Double_t amplwf[nblocks] = {-100};
     std::vector<Double_t> amplwf(nblocks, -100);
-    // Double_t chi2[nblocks] = {-1};
     std::vector<Double_t> chi2(nblocks, -1.0);
+  //  std::vector<Double_t> h1time(nblocks, -1.0);
+  //  std::vector<Double_t> h2time(nblocks, -1.0);
+    std::vector<Double_t> h1time;
+    std::vector<Double_t> h2time;
     Double_t ener[nblocks];
     Double_t integ[nblocks];
     Double_t noise[nblocks];
     Double_t bkg[nblocks];
     Double_t sigmax[nblocks];
-    // Double_t Sampampl[nblocks] = {-100};
     std::vector<Double_t> Sampampl(nblocks, -100);
     Double_t Sampped[nblocks];
-    //Double_t Samptime[nblocks] = {-100};
     std::vector<Double_t> Samptime(nblocks, -100);
     Double_t Sampener[nblocks];
     Double_t Npulse[nblocks];
     Int_t nsampwf = 0;
 
-    // Int_t wfnpulse[nblocks] = {-100};
     std::vector<Int_t> wfnpulse(nblocks, -100);
     Double_t wfampl[nblocks][maxwfpulses];
     Double_t wftime[nblocks][maxwfpulses];
     // not used but here they are anyway
     Double_t ampl2[nblocks];
-    // Double_t ampl[nblocks] = {-100};
     std::vector<Double_t> ampl(nblocks, -100);
     Double_t time[nblocks];
     Double_t larg50[nblocks];
@@ -533,8 +507,6 @@ void TEST_2(int run, int seg)
     {
       nsampwf++;
       cout << "!!!! NSampWaveForm problem  " << evt << "  " << NSampWaveForm << " " << Ndata << endl;
-      // Need to return something.All Arrays initialized to 0 or -100
-      // return std::make_tuple(chi2, ampl, amplwf, wfnpulse, Sampampl, Samptime, timewf, enertot, integtot, pres, corr_time_HMS);
     }
 
     if (NSampWaveForm <= Ndata) // NSampWaveForm must be <= Ndata (otherwise correct Ndata value)
@@ -712,11 +684,15 @@ void TEST_2(int run, int seg)
             {
 
               /// fix later //// diagnostic histos
-              /*
-                h2time->Fill(wftime[i][p], 1.);
+              
+               // h2time->Fill(wftime[i][p], 1.);
+               //h2time[i]=wftime[i][p];
+               h2time.push_back(wftime[i][p]);
 
-                h1time->Fill(finter[i]->GetParameter(2 + 2 * p), 1.);
-              */
+               // h1time->Fill(finter[i]->GetParameter(2 + 2 * p), 1.);
+               // h1time[i]=finter[i]->GetParameter(2 + 2 * p);
+               h1time.push_back(finter[i]->GetParameter(2 + 2 * p));
+              
             } // Fill the time spectrums
 
             if (p == 0)
@@ -831,20 +807,14 @@ void TEST_2(int run, int seg)
       }
 
       // Lambda returns a tuple of all the arrays to be written to dataframe. this replaces filling branches in ttree
-      // return std::make_tuple(chi2, ampl, amplwf, wfnpulse, Sampampl, Samptime, timewf, enertot, integtot, pres, corr_time_HMS);
       // treeout->Fill();
 
       // gObjectTable->Print();
 
     } // end if(NSampWaveForm<=Ndata)
 
-    // After processing events, check the list of objects in memory
-    if (evt % 1000 == 0)
-    {
-      std::cout << "Objects in memory After event processing:" << std::endl;
-      gObjectTable->Print();
-    }
-    return std::make_tuple(chi2, ampl, amplwf, wfnpulse, Sampampl, Samptime, timewf, enertot, integtot, pres, corr_time_HMS);
+    
+    return std::make_tuple(chi2, ampl, amplwf, wfnpulse, Sampampl, Samptime, timewf, enertot, integtot, pres, corr_time_HMS, h1time, h2time);
   }; // End of lambda (event loop)
 
   /////////////////////////////////////////////////////////////////////////////////////////
@@ -856,125 +826,64 @@ void TEST_2(int run, int seg)
   // Make output dataframe with columns as the output tuple and all the arrays within
   auto df_final = df2.Define("tuple", analyze, {"NSampWaveForm", "SampWaveForm", "evt", "NadcCounter", "adcCounter", "adcSampPulseTime", "adcSampPulseTimeRaw", "adcSampPulseAmp", "adcSampPulseInt", "adcSampPulsePed"});
 
-
-//Block of testing Define data types
-  /*
-  auto testchi2 = [](const auto &tuple) -> Double_t
-  {
-    Double_t help = 3.0;
-    // Extract the 0th element
-    using T = decltype(std::get<0>(tuple)); // Get the type of the 0th element
-    checkType(std::get<0>(tuple));          // Check type of the first element
-    //return std::get<0>(tuple);              // Return the first element
-    return help;
-  };
-  // Call the test function on the dataframe
-//df_final = df_final.Define("chi2", testchi2,{"tuple"});
-//df_final = df_final.Define("chi2", {"tuple"});
-
-std::vector<Double_t> testvect2(nblocks, -100);
-std::vector<Double_t> testvect3(nblocks, -100);
-auto test3 = std::make_tuple(testvect2,testvect3);
-auto test4 = std::get<0>(test3);
-auto test5 = [=](const std::vector<Double_t> &input){
-  return input;
-};
-auto test6 = [=](const std::tuple<std::vector<Double_t>> &input){
-  return input;
-};
-auto test7 = [=](const std::tuple<std::vector<Double_t>> &input){
-  auto testfinal = std::get<0>(input);
-  return testfinal;
-};
-df_final = df_final.Define("chi1", {"test3"});
-df_final = df_final.Define("chi2", {"test4"});
-df_final = df_final.Define("chi3", test5, {"chi2"});
-df_final = df_final.Define("chi4", test6, {"chi1"});
-df_final = df_final.Define("chi5", test7, {"chi1"});
-
-df_final = df_final.Define("chi6", [=](const std::tuple<std::vector<Double_t>,std::vector<Double_t>> &input){
-  auto testfinal = std::get<1>(input);
-  return testfinal;
-}, {"tuple"});
-
-df_final = df_final.Define("ampl", [](const std::tuple<std::vector<Double_t>,std::vector<Double_t>> &tuple){ 
-  std::vector<Double_t> output = std::get<1>(tuple);
-  return output; },{"tuple"});
-  
-*/
-
-  df_final = df_final.Define("chi2", [](const std::tuple<std::vector<Double_t>,std::vector<Double_t>,std::vector<Double_t>,std::vector<Int_t>,std::vector<Double_t>,std::vector<Double_t>,std::vector<Double_t>,Double_t,Double_t,std::vector<Int_t>,Double_t> &tuple){ 
+  // Using auto casued compile error for lambda arguements, had to list them explicitly to work?
+  df_final = df_final.Define("chi2", [](const std::tuple<std::vector<Double_t>,std::vector<Double_t>,std::vector<Double_t>,std::vector<Int_t>,std::vector<Double_t>,std::vector<Double_t>,std::vector<Double_t>,Double_t,Double_t,std::vector<Int_t>,Double_t,std::vector<Double_t>,std::vector<Double_t>> &tuple){ 
    std::vector<Double_t> output = std::get<0>(tuple);
    return output; },{"tuple"});
-  df_final = df_final.Define("ampl", [](const std::tuple<std::vector<Double_t>,std::vector<Double_t>,std::vector<Double_t>,std::vector<Int_t>,std::vector<Double_t>,std::vector<Double_t>,std::vector<Double_t>,Double_t,Double_t,std::vector<Int_t>,Double_t> &tuple){ 
+  df_final = df_final.Define("ampl", [](const std::tuple<std::vector<Double_t>,std::vector<Double_t>,std::vector<Double_t>,std::vector<Int_t>,std::vector<Double_t>,std::vector<Double_t>,std::vector<Double_t>,Double_t,Double_t,std::vector<Int_t>,Double_t,std::vector<Double_t>,std::vector<Double_t>> &tuple){ 
     std::vector<Double_t> output = std::get<1>(tuple);
     return output; },{"tuple"});
-  df_final = df_final.Define("amplwf", [](const std::tuple<std::vector<Double_t>,std::vector<Double_t>,std::vector<Double_t>,std::vector<Int_t>,std::vector<Double_t>,std::vector<Double_t>,std::vector<Double_t>,Double_t,Double_t,std::vector<Int_t>,Double_t> &tuple){ 
+  df_final = df_final.Define("amplwf", [](const std::tuple<std::vector<Double_t>,std::vector<Double_t>,std::vector<Double_t>,std::vector<Int_t>,std::vector<Double_t>,std::vector<Double_t>,std::vector<Double_t>,Double_t,Double_t,std::vector<Int_t>,Double_t,std::vector<Double_t>,std::vector<Double_t>> &tuple){ 
     std::vector<Double_t> output = std::get<2>(tuple);
     return output; },{"tuple"});
-    df_final = df_final.Define("wfnpulse", [](const std::tuple<std::vector<Double_t>,std::vector<Double_t>,std::vector<Double_t>,std::vector<Int_t>,std::vector<Double_t>,std::vector<Double_t>,std::vector<Double_t>,Double_t,Double_t,std::vector<Int_t>,Double_t> &tuple){ 
+    df_final = df_final.Define("wfnpulse", [](const std::tuple<std::vector<Double_t>,std::vector<Double_t>,std::vector<Double_t>,std::vector<Int_t>,std::vector<Double_t>,std::vector<Double_t>,std::vector<Double_t>,Double_t,Double_t,std::vector<Int_t>,Double_t,std::vector<Double_t>,std::vector<Double_t>> &tuple){ 
       std::vector<Int_t> output = std::get<3>(tuple);
       return output; },{"tuple"});  
-      df_final = df_final.Define("Sampampl", [](const std::tuple<std::vector<Double_t>,std::vector<Double_t>,std::vector<Double_t>,std::vector<Int_t>,std::vector<Double_t>,std::vector<Double_t>,std::vector<Double_t>,Double_t,Double_t,std::vector<Int_t>,Double_t> &tuple){ 
+      df_final = df_final.Define("Sampampl", [](const std::tuple<std::vector<Double_t>,std::vector<Double_t>,std::vector<Double_t>,std::vector<Int_t>,std::vector<Double_t>,std::vector<Double_t>,std::vector<Double_t>,Double_t,Double_t,std::vector<Int_t>,Double_t,std::vector<Double_t>,std::vector<Double_t>> &tuple){ 
         std::vector<Double_t> output = std::get<4>(tuple);
         return output; },{"tuple"});
-        df_final = df_final.Define("Samptime", [](const std::tuple<std::vector<Double_t>,std::vector<Double_t>,std::vector<Double_t>,std::vector<Int_t>,std::vector<Double_t>,std::vector<Double_t>,std::vector<Double_t>,Double_t,Double_t,std::vector<Int_t>,Double_t> &tuple){ 
+        df_final = df_final.Define("Samptime", [](const std::tuple<std::vector<Double_t>,std::vector<Double_t>,std::vector<Double_t>,std::vector<Int_t>,std::vector<Double_t>,std::vector<Double_t>,std::vector<Double_t>,Double_t,Double_t,std::vector<Int_t>,Double_t,std::vector<Double_t>,std::vector<Double_t>> &tuple){ 
           std::vector<Double_t> output = std::get<5>(tuple);
           return output; },{"tuple"});  
-          df_final = df_final.Define("timewf", [](const std::tuple<std::vector<Double_t>,std::vector<Double_t>,std::vector<Double_t>,std::vector<Int_t>,std::vector<Double_t>,std::vector<Double_t>,std::vector<Double_t>,Double_t,Double_t,std::vector<Int_t>,Double_t> &tuple){ 
+          df_final = df_final.Define("timewf", [](const std::tuple<std::vector<Double_t>,std::vector<Double_t>,std::vector<Double_t>,std::vector<Int_t>,std::vector<Double_t>,std::vector<Double_t>,std::vector<Double_t>,Double_t,Double_t,std::vector<Int_t>,Double_t,std::vector<Double_t>,std::vector<Double_t>> &tuple){ 
             std::vector<Double_t> output = std::get<6>(tuple);
             return output; },{"tuple"});  
-            df_final = df_final.Define("enertot", [](const std::tuple<std::vector<Double_t>,std::vector<Double_t>,std::vector<Double_t>,std::vector<Int_t>,std::vector<Double_t>,std::vector<Double_t>,std::vector<Double_t>,Double_t,Double_t,std::vector<Int_t>,Double_t> &tuple){ 
+            df_final = df_final.Define("enertot", [](const std::tuple<std::vector<Double_t>,std::vector<Double_t>,std::vector<Double_t>,std::vector<Int_t>,std::vector<Double_t>,std::vector<Double_t>,std::vector<Double_t>,Double_t,Double_t,std::vector<Int_t>,Double_t,std::vector<Double_t>,std::vector<Double_t>> &tuple){ 
               Double_t output = std::get<7>(tuple);
               return output; },{"tuple"});  
-              df_final = df_final.Define("integtot", [](const std::tuple<std::vector<Double_t>,std::vector<Double_t>,std::vector<Double_t>,std::vector<Int_t>,std::vector<Double_t>,std::vector<Double_t>,std::vector<Double_t>,Double_t,Double_t,std::vector<Int_t>,Double_t> &tuple){ 
+              df_final = df_final.Define("integtot", [](const std::tuple<std::vector<Double_t>,std::vector<Double_t>,std::vector<Double_t>,std::vector<Int_t>,std::vector<Double_t>,std::vector<Double_t>,std::vector<Double_t>,Double_t,Double_t,std::vector<Int_t>,Double_t,std::vector<Double_t>,std::vector<Double_t>> &tuple){ 
                 Double_t output = std::get<8>(tuple);
                 return output; },{"tuple"});  
-                df_final = df_final.Define("pres", [](const std::tuple<std::vector<Double_t>,std::vector<Double_t>,std::vector<Double_t>,std::vector<Int_t>,std::vector<Double_t>,std::vector<Double_t>,std::vector<Double_t>,Double_t,Double_t,std::vector<Int_t>,Double_t> &tuple){ 
+                df_final = df_final.Define("pres", [](const std::tuple<std::vector<Double_t>,std::vector<Double_t>,std::vector<Double_t>,std::vector<Int_t>,std::vector<Double_t>,std::vector<Double_t>,std::vector<Double_t>,Double_t,Double_t,std::vector<Int_t>,Double_t,std::vector<Double_t>,std::vector<Double_t>> &tuple){ 
                   std::vector<Int_t> output = std::get<9>(tuple);
                   return output; },{"tuple"});  
-                  df_final = df_final.Define("corr_time_HMS", [](const std::tuple<std::vector<Double_t>,std::vector<Double_t>,std::vector<Double_t>,std::vector<Int_t>,std::vector<Double_t>,std::vector<Double_t>,std::vector<Double_t>,Double_t,Double_t,std::vector<Int_t>,Double_t> &tuple){ 
+                  df_final = df_final.Define("corr_time_HMS", [](const std::tuple<std::vector<Double_t>,std::vector<Double_t>,std::vector<Double_t>,std::vector<Int_t>,std::vector<Double_t>,std::vector<Double_t>,std::vector<Double_t>,Double_t,Double_t,std::vector<Int_t>,Double_t,std::vector<Double_t>,std::vector<Double_t>> &tuple){ 
                     Double_t output = std::get<10>(tuple);
-                    return output; },{"tuple"});  
-                                                                      
-  
+                    return output; },{"tuple"});
+                    df_final = df_final.Define("h1time", [](const std::tuple<std::vector<Double_t>,std::vector<Double_t>,std::vector<Double_t>,std::vector<Int_t>,std::vector<Double_t>,std::vector<Double_t>,std::vector<Double_t>,Double_t,Double_t,std::vector<Int_t>,Double_t,std::vector<Double_t>,std::vector<Double_t>> &tuple){ 
+                      std::vector<Double_t> output = std::get<11>(tuple);
+                      return output; },{"tuple"}); 
+                      df_final = df_final.Define("h2time", [](const std::tuple<std::vector<Double_t>,std::vector<Double_t>,std::vector<Double_t>,std::vector<Int_t>,std::vector<Double_t>,std::vector<Double_t>,std::vector<Double_t>,Double_t,Double_t,std::vector<Int_t>,Double_t,std::vector<Double_t>,std::vector<Double_t>> &tuple){ 
+                        std::vector<Double_t> output = std::get<12>(tuple);
+                        return output; },{"tuple"});   
+                                                  
+                    
+ auto h_h1time = df_final.Histo1D(m_h1time ,"h1time");
+ auto h_h2time = df_final.Histo1D(m_h2time ,"h2time");
 
-
-
-  /*
-  df_final = df_final.Define("chi2", [](const auto &tuple)
-                             { using T = decltype(std::get<0>(tuple));
-                              std::cout << "Type of chi2: " << typeid(T).name() << std::endl; // Check type of the first element
-                              std::vector<Double_t> chi2_vector = std::get<0>(tuple); // Cast if expected to be a vector
-                              return chi2_vector[0]; });
-  df_final = df_final.Define("ampl", [](const auto &tuple)
-                             { return std::get<1>(tuple); });
-  df_final = df_final.Define("amplwf", [](const auto &tuple)
-                             { return std::get<2>(tuple); });
-  df_final = df_final.Define("wfnpulse", [](const auto &tuple)
-                             { return std::get<3>(tuple); });
-  df_final = df_final.Define("Sampampl", [](const auto &tuple)
-                             { return std::get<4>(tuple); });
-  df_final = df_final.Define("Samptime", [](const auto &tuple)
-                             { return std::get<5>(tuple); });
-  df_final = df_final.Define("tiomewf", [](const auto &tuple)
-                             { return std::get<6>(tuple); });
-  df_final = df_final.Define("enertot", [](const auto &tuple)
-                             { return std::get<7>(tuple); });
-  df_final = df_final.Define("integtot", [](const auto &tuple)
-                             { return std::get<8>(tuple); });
-  df_final = df_final.Define("pres", [](const auto &tuple)
-                             { return std::get<9>(tuple); });
-  df_final = df_final.Define("corr_time_HMS", [](const auto &tuple)
-                             { return std::get<10>(tuple); });
-*/
   // Save the dataframe to the output ROOT file
-  TString rootfilePath = Form("/volatile/hallc/nps/kerver/nps_production_%d_%d.root", run, seg);
+  TString rootfilePath = Form("/volatile/hallc/nps/kerver/ROOTfiles/WF/nps_production_%d_%d.root", run, seg);
   auto columnNames = df_final.GetColumnNames();
   for (const auto &col : columnNames) {
    // std::cout << col << std::endl;
 }
-df_final.Snapshot("treeout", rootfilePath, {"chi2","ampl"});
+df_final.Snapshot("treeout", rootfilePath, {"chi2","ampl","amplwf","wfnpulse","Sampampl","Samptime","timewf","enertot","integtot","pres","corr_time_HMS","h1time","h2time","evt"});
+
+    // Open output file and save histogram
+    TFile outFile(rootfilePath, "UPDATE");
+    h_h1time->Write();  // Write histogram to the output file
+    h_h2time->Write();  // Write histogram to the output file
+    outFile.Close();
 
   // Then safely write and delete at the end
   /*
