@@ -63,6 +63,11 @@ void TEST_2(int run, int seg)
   // FIT FUNCTION redefined as a lambda function for MT use
   auto func = [=](Double_t *x, Double_t *par)
   {
+    if (!par){
+      cout << "NULL PARAM POINTER!" <<endl;
+      return 0.0;  // not checking if par[0] is nullptr
+    } 
+
     Int_t j = (int)(par[0]);
     Double_t val = 0;
     for (Int_t p = 0; p < maxwfpulses; p++)
@@ -84,9 +89,9 @@ void TEST_2(int run, int seg)
 
   // BUILD TCHAIN
   TChain chain("T");
-  //TString filename = Form("/cache/hallc/c-nps/analysis/online/replays/nps_hms_coin_%d_%d_1_-1.root", run, seg);
+  TString filename = Form("/cache/hallc/c-nps/analysis/pass2/replays/production/nps_hms_coin_%d_%d_1_-1.root", run, seg);
   //TString filename = Form("/mss/hallc/c-nps/analysis/online/replays/nps_hms_coin_%d_%d_1_-1.root", run, seg);
-  TString filename = Form("../nps_hms_coin_%d_%d_1_-1.root", run, seg);
+  //TString filename = Form("../nps_hms_coin_%d_%d_1_-1.root", run, seg);
   TFile *testOpen = TFile::Open(filename);
   if (!testOpen || testOpen->IsZombie())
   {
@@ -301,7 +306,8 @@ void TEST_2(int run, int seg)
   ////////Lambda funtion for the per-event wf analysis/////////
   auto analyze = [=](Int_t NSampWaveForm, const ROOT::VecOps::RVec<Double_t> &SampWaveForm, Double_t evt, Int_t NadcCounter, ROOT::VecOps::RVec<Double_t> &adcCounter, const ROOT::VecOps::RVec<Double_t> adcSampPulseTime, const ROOT::VecOps::RVec<Double_t> adcSampPulseTimeRaw, const ROOT::VecOps::RVec<Double_t> adcSampPulseAmp, const ROOT::VecOps::RVec<Double_t> adcSampPulseInt, const ROOT::VecOps::RVec<Double_t> adcSampPulsePed)
   {
-    TF1 *finter[nblocks];
+    //TF1 *finter[nblocks];
+    std::vector<std::unique_ptr<TF1>> finter(nblocks); //object is now thread-local
     TH1F *hsig_i[nblocks];
     //Int_t pres[nblocks] = {0};
     std::vector<Int_t> pres(nblocks, 0);
@@ -449,6 +455,7 @@ void TEST_2(int run, int seg)
           // Check to debug
           if (wfampl[bn][p] > 0)
           { // Ensure it's positive before multiplying
+            //no param previously set. default is out of limit causing warning?
             finter[bn]->SetParLimits(3 + 2 * p, wfampl[bn][p] * 0.2, wfampl[bn][p] * 3);
           }
           else
@@ -500,7 +507,8 @@ void TEST_2(int run, int seg)
       // hsig_i[bn]->Fit(Form("finter_%d",bn),"Q","",TMath::Max(0.,wftime[bn][0]-20),ntime);
       // File << "Checkpoint: Before fitting function for bn = " << bn << endl;
 
-      hsig_i[bn]->Fit(Form("finter_%d", bn), "Q", "", 0., ntime);
+      //hsig_i[bn]->Fit(Form("finter_%d", bn), "Q", "", 0., ntime);
+      hsig_i[bn]->Fit(finter[bn].get(), "Q", "", 0., ntime);
     };
 
     if (NSampWaveForm > Ndata)
@@ -523,7 +531,8 @@ void TEST_2(int run, int seg)
         Sampener[i] = -100;
         Npulse[i] = 0;
 
-        finter[i] = new TF1(Form("finter_%d", i), func, -200, ntime + 200, nbparameters);
+        //finter[i] = new TF1(Form("finter_%d", i), func, -200, ntime + 200, nbparameters);
+        finter[i] = std::make_unique<TF1>(Form("finter_%d", i),func, -200, ntime + 200,nbparameters); //now a thread-local object
         finter[i]->FixParameter(0, i); // numero de bloc
         finter[i]->SetLineColor(4);
         finter[i]->SetNpx(1100);
@@ -610,7 +619,7 @@ void TEST_2(int run, int seg)
         {
           if (TMath::Abs(corr_time_HMS - (adcSampPulseTime[iNdata] - adcSampPulseTimeRaw[iNdata] / 16. - tdcoffset[(int)(adcCounter[iNdata])])) > 0.001)
           {
-            cout << "problem HMS time correction event " << evt << endl;
+            cout << "problem HMS time correction event " << evt <<"  "<< corr_time_HMS <<" "<<tdcoffset[(int)(adcCounter[iNdata])]<< endl;
           }
         }
 
