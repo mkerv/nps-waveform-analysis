@@ -89,9 +89,9 @@ void TEST_2(int run, int seg)
 
   // BUILD TCHAIN
   TChain chain("T");
-  TString filename = Form("/cache/hallc/c-nps/analysis/pass2/replays/production/nps_hms_coin_%d_%d_1_-1.root", run, seg);
+  //TString filename = Form("/cache/hallc/c-nps/analysis/pass2/replays/production/nps_hms_coin_%d_%d_1_-1.root", run, seg);
   //TString filename = Form("/mss/hallc/c-nps/analysis/online/replays/nps_hms_coin_%d_%d_1_-1.root", run, seg);
-  //TString filename = Form("../nps_hms_coin_%d_%d_1_-1.root", run, seg);
+  TString filename = Form("../nps_hms_coin_%d_%d_1_-1.root", run, seg);
   TFile *testOpen = TFile::Open(filename);
   if (!testOpen || testOpen->IsZombie())
   {
@@ -304,7 +304,7 @@ void TEST_2(int run, int seg)
 
 */
   ////////Lambda funtion for the per-event wf analysis/////////
-  auto analyze = [=](Int_t NSampWaveForm, const ROOT::VecOps::RVec<Double_t> &SampWaveForm, Double_t evt, Int_t NadcCounter, ROOT::VecOps::RVec<Double_t> &adcCounter, const ROOT::VecOps::RVec<Double_t> adcSampPulseTime, const ROOT::VecOps::RVec<Double_t> adcSampPulseTimeRaw, const ROOT::VecOps::RVec<Double_t> adcSampPulseAmp, const ROOT::VecOps::RVec<Double_t> adcSampPulseInt, const ROOT::VecOps::RVec<Double_t> adcSampPulsePed)
+  auto analyze = [=, &t](Int_t NSampWaveForm, const ROOT::VecOps::RVec<Double_t> &SampWaveForm, Double_t evt, Int_t NadcCounter, ROOT::VecOps::RVec<Double_t> &adcCounter, const ROOT::VecOps::RVec<Double_t> adcSampPulseTime, const ROOT::VecOps::RVec<Double_t> adcSampPulseTimeRaw, const ROOT::VecOps::RVec<Double_t> adcSampPulseAmp, const ROOT::VecOps::RVec<Double_t> adcSampPulseInt, const ROOT::VecOps::RVec<Double_t> adcSampPulsePed)
   {
     //TF1 *finter[nblocks];
     std::vector<std::unique_ptr<TF1>> finter(nblocks); //object is now thread-local
@@ -619,7 +619,7 @@ void TEST_2(int run, int seg)
         {
           if (TMath::Abs(corr_time_HMS - (adcSampPulseTime[iNdata] - adcSampPulseTimeRaw[iNdata] / 16. - tdcoffset[(int)(adcCounter[iNdata])])) > 0.001)
           {
-            cout << "problem HMS time correction event " << evt <<"  "<< corr_time_HMS <<" "<<tdcoffset[(int)(adcCounter[iNdata])]<< endl;
+            //cout << "problem HMS time correction event " << evt <<"  "<< corr_time_HMS <<" "<<tdcoffset[(int)(adcCounter[iNdata])]<< endl;
           }
         }
 
@@ -817,8 +817,13 @@ void TEST_2(int run, int seg)
 
       // Lambda returns a tuple of all the arrays to be written to dataframe. this replaces filling branches in ttree
       // treeout->Fill();
+if((int)evt % 1000 == 0){
+  cout <<" Entry = "<< evt <<"  cpu time="<<t.RealTime()<<endl;
+  t.Continue();
 
-      // gObjectTable->Print();
+       gObjectTable->Print();
+
+      }
 
     } // end if(NSampWaveForm<=Ndata)
 
@@ -881,7 +886,7 @@ void TEST_2(int run, int seg)
  auto h_h2time = df_final.Histo1D(m_h2time ,"h2time");
 
   // Save the dataframe to the output ROOT file
-  TString rootfilePath = Form("/volatile/hallc/nps/kerver/ROOTfiles/WF/nps_production_%d_%d.root", run, seg);
+  TString rootfilePath = Form("/volatile/hallc/nps/kerver/ROOTfiles/WF/nps_production_%d_%d_%d.root", run, seg,nthreads);
   auto columnNames = df_final.GetColumnNames();
   for (const auto &col : columnNames) {
    // std::cout << col << std::endl;
@@ -907,4 +912,6 @@ df_final.Snapshot("treeout", rootfilePath, {"chi2","ampl","amplwf","wfnpulse","S
   // TTree was never written to output file???
 
   cout << "fin de l'analyse" << endl;
+  t.Stop();
+  t.Print();
 }
