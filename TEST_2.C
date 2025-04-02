@@ -82,7 +82,7 @@ void TEST_2(int run, int seg)
   t.Start();
 
   // ENABLE MT
-  const int nthreads = 8; // or any number
+  const int nthreads = 4; // or any number
   ROOT::EnableImplicitMT(nthreads);
   std::cout << "Implicit MT enabled: " << ROOT::IsImplicitMTEnabled() << "\n";
   std::cout << "Number of threads: " << ROOT::GetThreadPoolSize() << "\n";
@@ -255,10 +255,10 @@ void TEST_2(int run, int seg)
                  .Define("cernpe", "H.cer.npeSum")
                  .Define("caltracknorm", "H.cal.etottracknorm")
                  //.Define("evt", "rdfentry_") // define event number from row of rdataframe for troubleshoooting (threadsafe)
-                 .Define("evt", "g.evnum") // define event number from row of rdataframe for troubleshoooting (threadsafe)
-                 .Filter("TMath::Abs(H.gtr.th) < 0.08")
-                 .Filter("TMath::Abs(H.gtr.ph) < 0.04")
-                 .Filter("TMath::Abs(H.gtr.dp) < 10");
+                 .Define("evt", "g.evnum"); // define event number from row of rdataframe for troubleshoooting (threadsafe)
+                 //.Filter("TMath::Abs(H.gtr.th) < 0.08")
+                 //.Filter("TMath::Abs(H.gtr.ph) < 0.04")
+                 //.Filter("TMath::Abs(H.gtr.dp) < 10");
 
   // Output rootfile
   // Other variables
@@ -821,11 +821,15 @@ if((int)evt % 1000 == 0){
   cout <<" Entry = "<< evt <<"  cpu time="<<t.RealTime()<<endl;
   t.Continue();
 
-       gObjectTable->Print();
+       //gObjectTable->Print();
 
       }
 
     } // end if(NSampWaveForm<=Ndata)
+    for (int i = 0; i < nblocks; ++i) {
+      delete hsig_i[i];
+  }
+  
 
     
     return std::make_tuple(chi2, ampl, amplwf, wfnpulse, Sampampl, Samptime, timewf, enertot, integtot, pres, corr_time_HMS, h1time, h2time);
