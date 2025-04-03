@@ -48,8 +48,9 @@ const int maxwfpulses = 12; // nb maximal de pulses que la wfa peut trouver
 const int ntemp = 56;       // nb of temp sensors
 
 Double_t timeref[nblocks];
-Double_t timerefacc = -4.5; // car les bons pulses elastiques poussent vers 45.5 (4*ns) dans la wf alors que ceux des production runs sont vers 35.5 (4ns)
-Double_t timerefacc2 = 0;   // en (-4ns) car le pic de timewf pousse vers -22ns
+Float_t cortime[nblocks];
+//Double_t timerefacc = -4.5; // car les bons pulses elastiques poussent vers 45.5 (4*ns) dans la wf alors que ceux des production runs sont vers 35.5 (4ns)
+Double_t timerefacc = 0;   // en (-4ns) car le pic de timewf pousse vers -22ns
 
 ROOT::Math::Interpolator *interpolation[nblocks]; // function used for the interpolation
 
@@ -115,11 +116,6 @@ void TEST_2(int run, int seg)
   // Define a new RDataFrame that processes only 1% of the events
   auto nEventsToProcess = nEntriesDF / 1000;
   //auto df1percent = df.Range(0, nEventsToProcess);
-
-  if (run == 2016)
-  {
-    timerefacc = -10; // keep this condition and might add more runs if that happens again
-  }
 
   Double_t dt = 4.;                                    // time bin (sample) width (4 ns), the total time window is then ntime*dt
   const int nslots = 1104;                             // nb maximal de slots dans tous les fADC
@@ -215,6 +211,19 @@ void TEST_2(int run, int seg)
     // cout<<i<<" "<<timeref[i]<<endl;
   }
 
+     // Lecture des corrections timing
+     ifstream filetime;
+     Float_t dum;
+     filetime.open("/w/hallc-scshelf2102/nps/wassim/ANALYSIS/TEST/filetime_step_i.txt");
+     for (Int_t i = 0; i < nblocks; i++)
+     {
+         filetime >> dum >> cortime[i] >> dum >> dum >> dum;
+         if(cortime[i]==0){
+          cortime[i]=-0.00001;
+         }
+     }
+     filetime.close();
+
   // Load only required branches into dataframe
   auto df2 = df.Define("NSampWaveForm", "Ndata.NPS.cal.fly.adcSampWaveform")
                  .Define("SampWaveForm", "NPS.cal.fly.adcSampWaveform")
@@ -269,12 +278,40 @@ void TEST_2(int run, int seg)
   tex->SetTextSize(0.015);
   TH1::AddDirectory(kFALSE);
 
+
+
+Double_t calodist = 9.5;
+
+if (run > 1571 && run < 3667)
+{
+    calodist = 3.5;
+}
+else if (run > 3666 && run < 4632)
+{
+    calodist = 4.;
+}
+else if (run > 4635 && run < 4953)
+{
+    calodist = 6.;
+}
+else if (run > 4965 && run < 5344)
+{
+    calodist = 4.;
+}
+else if (run > 5354 && run < 5464)
+{
+    calodist = 3.;
+}
+else if (run> 5523 && run < 7013)
+{
+    calodist = 3.5;
+}
+timerefacc = (calodist - 9.5) / (3.e8 * 1.e-9 * 4);
   // Read the mean time positions of cosmic pulses (this is determined by the macro analyse_wassim.C)
-  Float_t timemean[nblocks], timemean2[nblocks];
+  Float_t timemean2[nblocks];
   for (Int_t ii = 0; ii < nblocks; ii++)
   {
-    timemean[ii] = 50;
-    timemean2[ii] = 150;
+    timemean2[ii] = 170 + timerefacc * dt;
   } // 1st pass analysis, when the macro analyse_wassim.C is not executed yet (30 is the default value)
   // 2nd pass analysis, when the macro analyse_wassim.C is already executed. If not, comment the following lines
 
@@ -289,8 +326,6 @@ void TEST_2(int run, int seg)
  //Fill with finter[blocknum]->GetParameter(2 + 2 * p), 1.) and wfttime[blocknumn][numpulses] 
   // auto h1time = df2.Histo1D(m_h1time ,"");
 // auto h2time = df2.Histo1D(m_h2time ,"");
-
-
 
   /////// ANALYZE //////////////////////////////////////////////////////////
 
@@ -352,7 +387,7 @@ void TEST_2(int run, int seg)
     Int_t binmax;
 
     // The fit function need to be moved into the scope of analyze to capture all variables (wfnpulse)
-    auto Fitwf = [&wfnpulse, &wfampl, &finter, &hsig_i, &wftime](Int_t bn)
+    auto Fitwf = [=, &wfnpulse, &wfampl, &finter, &hsig_i, &wftime](Int_t bn)
     {
       // Detect the pulses
 
@@ -395,9 +430,10 @@ void TEST_2(int run, int seg)
             wftime[bn][wfnpulse[bn]] = hsig_i[bn]->GetBinCenter(it + 4); // get the time of the pulse found
 
             // flag for the good pulse
-            if (TMath::Abs(wftime[bn][wfnpulse[bn]] - timeref[bn] - timerefacc) < 4.1)
+            if (TMath::Abs(wftime[bn][wfnpulse[bn]] - timeref[bn] +(corr_time_HMS - cortime[bn]) / dt - timerefacc) < 4.)
             {
               good = 1;
+             //cpulse = wfnpulse[bn];
             }
 
             wfnpulse[bn]++;
@@ -435,10 +471,12 @@ void TEST_2(int run, int seg)
           finter[bn]->ReleaseParameter(2 + 2 * p);
           finter[bn]->ReleaseParameter(3 + 2 * p);
 
-          finter[bn]->SetParameter(2 + 2 * p, wftime[bn][p] - timeref[bn]);
+          //finter[bn]->SetParameter(2 + 2 * p, wftime[bn][p] - timeref[bn]);
+          finter[bn]->SetParameter(2 + 2 * p, wftime[bn][p] - timeref[bn] + (corr_time_HMS - cortime[bn]) / dt);
           finter[bn]->SetParameter(3 + 2 * p, wfampl[bn][p]);
 
-          finter[bn]->SetParLimits(2 + 2 * p, wftime[bn][p] - timeref[bn] - 3, wftime[bn][p] - timeref[bn] + 3);
+          //finter[bn]->SetParLimits(2 + 2 * p, wftime[bn][p] - timeref[bn] - 3, wftime[bn][p] - timeref[bn] + 3);
+          finter[bn]->SetParLimits(2 + 2 * p, wftime[bn][p] - timeref[bn] + (corr_time_HMS - cortime[bn]) / dt - 3, wftime[bn][p] - timeref[bn] + (corr_time_HMS - cortime[bn]) / dt + 3);
           finter[bn]->SetParLimits(3 + 2 * p, wfampl[bn][p] * 0.2, wfampl[bn][p] * 3);
         }
       }
@@ -449,36 +487,25 @@ void TEST_2(int run, int seg)
         {
           finter[bn]->ReleaseParameter(2 + 2 * p);
           finter[bn]->ReleaseParameter(3 + 2 * p);
-
-          finter[bn]->SetParameter(2 + 2 * p, wftime[bn][p] - timeref[bn]);
-
-          // Check to debug
-          if (wfampl[bn][p] > 0)
-          { // Ensure it's positive before multiplying
-            //no param previously set. default is out of limit causing warning?
-            finter[bn]->SetParLimits(3 + 2 * p, wfampl[bn][p] * 0.2, wfampl[bn][p] * 3);
-          }
-          else
-          {
-            cout << "Warning: wfampl[" << bn << "][" << p << "] is non-positive!" << endl;
-            // finter[bn]->SetParLimits(3 + 2 * p, 0.05, 10); // Set safe fallback limits
-          }
-
+          //finter[bn]->SetParameter(2 + 2 * p, wftime[bn][p] - timeref[bn]);
+          finter[bn]->SetParameter(2 + 2 * p, wftime[bn][p] - timeref[bn] + (corr_time_HMS - cortime[bn]) / dt);
           finter[bn]->SetParameter(3 + 2 * p, wfampl[bn][p]);
-
-          finter[bn]->SetParLimits(2 + 2 * p, wftime[bn][p] - timeref[bn] - 3, wftime[bn][p] - timeref[bn] + 3);
+          //finter[bn]->SetParLimits(2 + 2 * p, wftime[bn][p] - timeref[bn] - 3, wftime[bn][p] - timeref[bn] + 3);
+          finter[bn]->SetParLimits(2 + 2 * p, wftime[bn][p] - timeref[bn] + (corr_time_HMS - cortime[bn]) / dt - 3, wftime[bn][p] - timeref[bn] + (corr_time_HMS - cortime[bn]) / dt + 3);
           finter[bn]->SetParLimits(3 + 2 * p, wfampl[bn][p] * 0.2, wfampl[bn][p] * 3);
         }
 
         // On recherche quand meme un eventuel pulse en temps
+        //cpulse = wfnpulse[bn];
 
         finter[bn]->ReleaseParameter(2 + 2 * wfnpulse[bn]);
         finter[bn]->ReleaseParameter(3 + 2 * wfnpulse[bn]);
-
-        finter[bn]->SetParameter(2 + 2 * wfnpulse[bn], timerefacc);
+        //finter[bn]->SetParameter(2 + 2 * wfnpulse[bn], timerefacc);
+        finter[bn]->SetParameter(2 + 2 * wfnpulse[bn], timerefacc + (corr_time_HMS - cortime[bn]) / dt);
         finter[bn]->SetParameter(3 + 2 * wfnpulse[bn], 2);
+        //finter[bn]->SetParLimits(2 + 2 * wfnpulse[bn], timerefacc - 4, timerefacc + 4);
+        finter[bn]->SetParLimits(2 + 2 * wfnpulse[bn], timerefacc + (corr_time_HMS - cortime[bn]) / dt - 4, timerefacc + (corr_time_HMS - cortime[bn]) / dt + 4);
 
-        finter[bn]->SetParLimits(2 + 2 * wfnpulse[bn], timerefacc - 4, timerefacc + 4);
         finter[bn]->SetParLimits(3 + 2 * wfnpulse[bn], 0.05, 10);
 
         wfnpulse[bn]++;
@@ -491,10 +518,13 @@ void TEST_2(int run, int seg)
           finter[bn]->ReleaseParameter(2 + 2 * p);
           finter[bn]->ReleaseParameter(3 + 2 * p);
 
-          finter[bn]->SetParameter(2 + 2 * p, timerefacc);
+          //finter[bn]->SetParameter(2 + 2 * p, timerefacc);
+          finter[bn]->SetParameter(2 + 2 * p, timerefacc + (corr_time_HMS - cortime[bn]) / dt);
           finter[bn]->SetParameter(3 + 2 * p, 2);
 
-          finter[bn]->SetParLimits(2 + 2 * p, timerefacc - 4, timerefacc + 4);
+          //finter[bn]->SetParLimits(2 + 2 * p, timerefacc - 4, timerefacc + 4);
+          finter[bn]->SetParLimits(2 + 2 * p, timerefacc + (corr_time_HMS - cortime[bn]) / dt - 4, timerefacc + (corr_time_HMS - cortime[bn]) / dt + 4);
+
           finter[bn]->SetParLimits(3 + 2 * p, 0.05, 10);
         }
 
@@ -584,8 +614,9 @@ void TEST_2(int run, int seg)
 
           pres[bloc] = 1;
 
-          if (nsamp == ntime)
-          {
+          //wassims updated code doesnt have this requirement
+          //if (nsamp == ntime)
+          //{
             for (Int_t it = 0; it < nsamp; it++)
             {
               if (bloc > -0.5 && bloc < nblocks)
@@ -595,7 +626,7 @@ void TEST_2(int run, int seg)
               }
               ns++;
             }
-          }
+         // }
         } // fin if(bloc number is good)
       } // fin while()
 
@@ -656,7 +687,7 @@ void TEST_2(int run, int seg)
 
       for (Int_t i = 0; i < nblocks; i++)
       {
-        if (pres[i] == 1) // if this block is present during event
+        if (pres[i] == 1 && nsamp == ntime) // if this block is present during event
         {
           for (Int_t it = 0; it < nsamp; it++)
           {
@@ -668,10 +699,9 @@ void TEST_2(int run, int seg)
             }
           }
 
-          if (nsamp == ntime)
-          {
+       
             Fitwf(i); // We call the fit here
-          }
+    
 
           // **Add this check to skip the block if finter[i] is invalid**
           if (!finter[i])
@@ -679,13 +709,14 @@ void TEST_2(int run, int seg)
             cout << "Skipping block " << i << " due to missing finter[" << i << "] at event " << evt << endl;
             continue;
           }
-
+          //cout << i << "  cpulse =" << cpulse << " wfnpulse1= " << wfnpulse1[i] << endl;
           chi2[i] = finter[i]->GetChisquare() / finter[i]->GetNDF();
 
           for (Int_t p = 0; p < TMath::Max(wfnpulse[i], 1); p++)
           {
 
-            wftime[i][p] = finter[i]->GetParameter(2 + 2 * p) * dt + corr_time_HMS; // temps du pulse en ns
+           // wftime[i][p] = finter[i]->GetParameter(2 + 2 * p) * dt + corr_time_HMS; // temps du pulse en ns
+            wftime[i][p] = finter[i]->GetParameter(2 + 2 * p) * dt + corr_time_HMS - cortime[i] - timerefacc * dt;
 
             wfampl[i][p] = finter[i]->GetParameter(3 + 2 * p); // amplitude du pulse en ns
 
@@ -700,7 +731,9 @@ void TEST_2(int run, int seg)
 
                // h1time->Fill(finter[i]->GetParameter(2 + 2 * p), 1.);
                // h1time[i]=finter[i]->GetParameter(2 + 2 * p);
-               h1time.push_back(finter[i]->GetParameter(2 + 2 * p));
+
+               h1time.push_back(finter[i]->GetParameter(2 + 2 * p) - timerefacc + corr_time_HMS / dt);
+               //h1time.push_back(finter[i]->GetParameter(2 + 2 * p));
               
             } // Fill the time spectrums
 
@@ -716,7 +749,7 @@ void TEST_2(int run, int seg)
 
             if (p > 0)
             {
-              if (TMath::Abs(wftime[i][p] - timerefacc2 * dt) < TMath::Abs(timewf[i] - timerefacc2 * dt))
+              if (TMath::Abs(wftime[i][p]) < TMath::Abs(timewf[i]))
               {
                 timewf[i] = wftime[i][p];
                 amplwf[i] = wfampl[i][p];
@@ -731,8 +764,8 @@ void TEST_2(int run, int seg)
       for (Int_t i = 0; i < nblocks; i++)
       {
 
-        binmin = (int)(timemean[i] - 25);
-        binmax = (int)(timemean[i] + 59);
+        binmin = 30;
+        binmax = 109;
 
         for (Int_t it = 0; it < nsamp; it++)
         {
