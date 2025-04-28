@@ -49,6 +49,7 @@ const int ntemp = 56;       // nb of temp sensors
 
 Double_t timeref[nblocks];
 Float_t cortime[nblocks];
+Int_t preswf[nblocks];
 //Double_t timerefacc = -4.5; // car les bons pulses elastiques poussent vers 45.5 (4*ns) dans la wf alors que ceux des production runs sont vers 35.5 (4ns)
 Double_t timerefacc = 0;   // en (-4ns) car le pic de timewf pousse vers -22ns
 
@@ -83,7 +84,7 @@ void TEST_2(int run, int seg)
   t.Start();
 
   // ENABLE MT
-  const int nthreads = 4; // or any number
+  const int nthreads = 6;// or any number
   ROOT::EnableImplicitMT(nthreads);
   std::cout << "Implicit MT enabled: " << ROOT::IsImplicitMTEnabled() << "\n";
   std::cout << "Number of threads: " << ROOT::GetThreadPoolSize() << "\n";
@@ -116,6 +117,7 @@ void TEST_2(int run, int seg)
   // Define a new RDataFrame that processes only 1% of the events
   auto nEventsToProcess = nEntriesDF / 1000;
   //auto df1percent = df.Range(0, nEventsToProcess);
+ // auto df1percent = df.Range(10000, 15000);
 
   Double_t dt = 4.;                                    // time bin (sample) width (4 ns), the total time window is then ntime*dt
   const int nslots = 1104;                             // nb maximal de slots dans tous les fADC
@@ -188,6 +190,7 @@ void TEST_2(int run, int seg)
     // filewf.open(Form("/w/hallc-scshelf2102/nps/wassim/ANALYSIS/Work_Analysis/WF/BK_TEST/TEST_BOOM/3883-3898/fit_e_runs/fit_elastic_runs/results_elastics/refwf/final_refwf_block_%d.txt",i)); Done
 
     timeref[i] = -1.e6;
+    preswf[i] = 0;
     interpolation[i] = new ROOT::Math::Interpolator(ntime, ROOT::Math::Interpolation::kCSPLINE);
 
     // Fill array with reference waveform (x,y) for each block. set reftime @ ymax
@@ -206,6 +209,7 @@ void TEST_2(int run, int seg)
         }
       }
       interpolation[i]->SetData(ntime, x, y);
+      preswf[i]=1;
     }
     filewf.close();
     // cout<<i<<" "<<timeref[i]<<endl;
@@ -219,13 +223,14 @@ void TEST_2(int run, int seg)
      {
          filetime >> dum >> cortime[i] >> dum >> dum >> dum;
          if(cortime[i]==0){
-          cortime[i]=-0.00001;
+          cortime[i]=-0.0000001;
          }
      }
      filetime.close();
 
   // Load only required branches into dataframe
   auto df2 = df.Define("NSampWaveForm", "Ndata.NPS.cal.fly.adcSampWaveform")
+  //auto df2 = df1percent.Define("NSampWaveForm", "Ndata.NPS.cal.fly.adcSampWaveform")
                  .Define("SampWaveForm", "NPS.cal.fly.adcSampWaveform")
                  .Define("NadcCounter", "Ndata.NPS.cal.fly.adcCounter")
                  .Define("adcCounter", "NPS.cal.fly.adcCounter")
@@ -400,7 +405,7 @@ timerefacc = (calodist - 9.5) / (3.e8 * 1.e-9 * 4);
         wfampl[bn][p] = -1;
       }
 
-      for (Int_t it = 0; it < ntime - 6; it++) // loop over number of samples(110) in an event for a given block
+      for (Int_t it = 1; it < ntime - 6; it++) // loop over number of samples(110) in an event for a given block
       {
         if (!finter[bn])
         {
@@ -414,9 +419,13 @@ timerefacc = (calodist - 9.5) / (3.e8 * 1.e-9 * 4);
         }
 
         // Condition over the number of samples in the pulse finding scheme
-        if (hsig_i[bn]->GetBinContent(it + 1) < hsig_i[bn]->GetBinContent(it + 2) && hsig_i[bn]->GetBinContent(it + 2) < hsig_i[bn]->GetBinContent(it + 3) && hsig_i[bn]->GetBinContent(it + 3) <= hsig_i[bn]->GetBinContent(it + 4) && hsig_i[bn]->GetBinContent(it + 4) >= hsig_i[bn]->GetBinContent(it + 5))
+        if (hsig_i[bn]->GetBinContent(it) < hsig_i[bn]->GetBinContent(it + 1) && hsig_i[bn]->GetBinContent(it + 1) < hsig_i[bn]->GetBinContent(it + 2) && hsig_i[bn]->GetBinContent(it + 2) < hsig_i[bn]->GetBinContent(it + 3) && hsig_i[bn]->GetBinContent(it + 3) <= hsig_i[bn]->GetBinContent(it + 4) && hsig_i[bn]->GetBinContent(it + 4) >= hsig_i[bn]->GetBinContent(it + 5) && hsig_i[bn]->GetBinContent(it + 5) >= hsig_i[bn]->GetBinContent(it + 6))
+      //above is new condition of 5 increasing samples and 2 decresaing. below is old: 4 up 1 down.
+        // if (hsig_i[bn]->GetBinContent(it + 1) < hsig_i[bn]->GetBinContent(it + 2) && hsig_i[bn]->GetBinContent(it + 2) < hsig_i[bn]->GetBinContent(it + 3) && hsig_i[bn]->GetBinContent(it + 3) <= hsig_i[bn]->GetBinContent(it + 4) && hsig_i[bn]->GetBinContent(it + 4) >= hsig_i[bn]->GetBinContent(it + 5))
         {
-          if (hsig_i[bn]->GetBinContent(it + 4) > 0)
+          if(true)
+          //temp always true to match wassims's 5amp criteria
+          //if (hsig_i[bn]->GetBinContent(it + 4) > 0)
           {
             // check if we exceeded the number of pulses
             if (wfnpulse[bn] >= maxwfpulses)
@@ -538,7 +547,7 @@ timerefacc = (calodist - 9.5) / (3.e8 * 1.e-9 * 4);
       // File << "Checkpoint: Before fitting function for bn = " << bn << endl;
 
       //hsig_i[bn]->Fit(Form("finter_%d", bn), "Q", "", 0., ntime);
-      hsig_i[bn]->Fit(finter[bn].get(), "Q", "", 0., ntime);
+      hsig_i[bn]->Fit(finter[bn].get(), "Q", "", 1., ntime);
     };
 
     if (NSampWaveForm > Ndata)
@@ -687,15 +696,15 @@ timerefacc = (calodist - 9.5) / (3.e8 * 1.e-9 * 4);
 
       for (Int_t i = 0; i < nblocks; i++)
       {
-        if (pres[i] == 1 && nsamp == ntime) // if this block is present during event
+        if (pres[i] == 1 && nsamp == ntime && preswf[i]==1 ) // if this block is present during event
         {
           for (Int_t it = 0; it < nsamp; it++)
           {
-            hsig_i[i]->SetBinError(it + 1, TMath::Sqrt(TMath::Abs(hsig_i[i]->GetBinContent(it + 1) * 4.096)) / 4.096);
+            hsig_i[i]->SetBinError(it + 1, TMath::Sqrt(TMath::Abs(hsig_i[i]->GetBinContent(it + 1) * 4.096/2.)) / 4.096);
 
             if (hsig_i[i]->GetBinContent(it + 1) < 1.)
             {
-              hsig_i[i]->SetBinError(it + 1, TMath::Sqrt(TMath::Abs(1. * 4.096)) / 4.096);
+              hsig_i[i]->SetBinError(it + 1, TMath::Sqrt(TMath::Abs(1. * 4.096/2.)) / 4.096);
             }
           }
 
@@ -859,11 +868,32 @@ if((int)evt % 1000 == 0){
       }
 
     } // end if(NSampWaveForm<=Ndata)
+
+    //Diagnostic Code for hsig_i
+    /*
+    int nonzero =0;
+    if ((int)evt % 1000 == 0) {
+      TFile *fout = new TFile(Form("/volatile/hallc/nps/kerver/ROOTfiles/debug_run_%d_evt_%lld.root",run, (long long)evt), "RECREATE");
+      for (int i = 0; i < nblocks; ++i) {
+        if (hsig_i[i] && hsig_i[i]->GetEntries() > 0) nonzero++;
+        if (hsig_i[i]){
+          std::cout << "evt=" << evt << ", block=" << i
+          << ", integral=" << hsig_i[i]->Integral() << std::endl;
+         hsig_i[i]->Write(Form("hsig_block_%d", i));
+        }
+      }
+      fout->Close();
+      delete fout;
+    }
+      
+    //end of diagnostic snippet 
+*/
+
     for (int i = 0; i < nblocks; ++i) {
       delete hsig_i[i];
   }
   
-
+//std::cout << "evt=" << evt << ": " << nonzero << " non-empty histograms\n";
     
     return std::make_tuple(chi2, ampl, amplwf, wfnpulse, Sampampl, Samptime, timewf, enertot, integtot, pres, corr_time_HMS, h1time, h2time);
   }; // End of lambda (event loop)
@@ -923,7 +953,7 @@ if((int)evt % 1000 == 0){
  auto h_h2time = df_final.Histo1D(m_h2time ,"h2time");
 
   // Save the dataframe to the output ROOT file
-  TString rootfilePath = Form("/volatile/hallc/nps/kerver/ROOTfiles/WF/nps_production_%d_%d_%d.root", run, seg,nthreads);
+  TString rootfilePath = Form("/volatile/hallc/nps/kerver/ROOTfiles/WF/nps_production_%d_%d_%d_interactive2.root", run, seg,nthreads);
   auto columnNames = df_final.GetColumnNames();
   for (const auto &col : columnNames) {
    // std::cout << col << std::endl;
