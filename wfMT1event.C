@@ -59,7 +59,7 @@ ROOT::Math::Interpolator *interpolation[nblocks]; // function used for the inter
 
 /////////////////////////////////////////////////////////////MAIN FUNCTION ///////////////////////////////////////////////////////////////////////
 
-void TEST_2(int run, int seg)
+void wfMT1event(int run, int seg, int selectevent, int selectblock)
 {
 
   // FIT FUNCTION redefined as a lambda function for MT use
@@ -85,15 +85,15 @@ void TEST_2(int run, int seg)
 
   // ENABLE MT
   const int nthreads = 6;// or any number
-  ROOT::EnableImplicitMT(nthreads);
+  //ROOT::EnableImplicitMT(nthreads);
   std::cout << "Implicit MT enabled: " << ROOT::IsImplicitMTEnabled() << "\n";
   std::cout << "Number of threads: " << ROOT::GetThreadPoolSize() << "\n";
 
   // BUILD TCHAIN
   TChain chain("T");
-  //TString filename = Form("/cache/hallc/c-nps/analysis/pass2/replays/production/nps_hms_coin_%d_%d_1_-1.root", run, seg);
+  TString filename = Form("/cache/hallc/c-nps/analysis/pass2/replays/production/nps_hms_coin_%d_%d_1_-1.root", run, seg);
   //TString filename = Form("/mss/hallc/c-nps/analysis/online/replays/nps_hms_coin_%d_%d_1_-1.root", run, seg);
-  TString filename = Form("../nps_hms_coin_%d_%d_1_-1.root", run, seg);
+  //TString filename = Form("../nps_hms_coin_%d_%d_1_-1.root", run, seg);
   TFile *testOpen = TFile::Open(filename);
   if (!testOpen || testOpen->IsZombie())
   {
@@ -117,7 +117,7 @@ void TEST_2(int run, int seg)
   // Define a new RDataFrame that processes only 1% of the events
   auto nEventsToProcess = nEntriesDF / 1000;
   //auto df1percent = df.Range(0, nEventsToProcess);
-  //auto df1percent = df.Range(10000, 15000);
+  auto df1percent = df.Range(selectevent-1, selectevent);
 
   Double_t dt = 4.;                                    // time bin (sample) width (4 ns), the total time window is then ntime*dt
   const int nslots = 1104;                             // nb maximal de slots dans tous les fADC
@@ -229,8 +229,8 @@ void TEST_2(int run, int seg)
      filetime.close();
 
   // Load only required branches into dataframe
-  auto df2 = df.Define("NSampWaveForm", "Ndata.NPS.cal.fly.adcSampWaveform")
-  //auto df2 = df1percent.Define("NSampWaveForm", "Ndata.NPS.cal.fly.adcSampWaveform")
+  //auto df2 = df.Define("NSampWaveForm", "Ndata.NPS.cal.fly.adcSampWaveform")
+  auto df2 = df1percent.Define("NSampWaveForm", "Ndata.NPS.cal.fly.adcSampWaveform")
                  .Define("SampWaveForm", "NPS.cal.fly.adcSampWaveform")
                  .Define("NadcCounter", "Ndata.NPS.cal.fly.adcCounter")
                  .Define("adcCounter", "NPS.cal.fly.adcCounter")
@@ -450,6 +450,7 @@ std::vector<std::vector<Double_t>> wftime(nblocks,
               good = 1;
              //cpulse = wfnpulse[bn];
             }
+            cout<<"detection bloc "<<bn<<" pulse="<<wfnpulse[bn]<<" time="<<wftime[bn][wfnpulse[bn]]<<" (4ns) ampl="<<wfampl[bn][wfnpulse[bn]]<<" reftime= "<<timeref[bn]<<" (4ns) diff="<<TMath::Abs(wftime[bn][wfnpulse[bn]]-timeref[bn])<<" good="<<good<<endl;
 
             wfnpulse[bn]++;
 
@@ -508,6 +509,9 @@ std::vector<std::vector<Double_t>> wftime(nblocks,
           //finter[bn]->SetParLimits(2 + 2 * p, wftime[bn][p] - timeref[bn] - 3, wftime[bn][p] - timeref[bn] + 3);
           finter[bn]->SetParLimits(2 + 2 * p, wftime[bn][p] - timeref[bn] + (corr_time_HMS - cortime[bn]) / dt - 3, wftime[bn][p] - timeref[bn] + (corr_time_HMS - cortime[bn]) / dt + 3);
           finter[bn]->SetParLimits(3 + 2 * p, wfampl[bn][p] * 0.2, wfampl[bn][p] * 3);
+
+          std::cout<<"SET PARAM "<<2 + 2 * p<<" : "<<finter[bn]->GetParameter(2 + 2 * p)<<" FROM: "<<wftime[bn][p]<<" "<<timeref[bn]<<" "<<corr_time_HMS<<" "<<cortime[bn]<<" "<<dt<<endl;
+
         }
 
         // On recherche quand meme un eventuel pulse en temps
@@ -553,7 +557,18 @@ std::vector<std::vector<Double_t>> wftime(nblocks,
       // File << "Checkpoint: Before fitting function for bn = " << bn << endl;
 
       //hsig_i[bn]->Fit(Form("finter_%d", bn), "Q", "", 0., ntime);
+      for(int p=0; p<nbparameters;p++){
+        std::cout<<p<<" : "<<finter[bn]->GetParameter(p)<<endl;
+      }
+
       hsig_i[bn]->Fit(finter[bn].get(), "Q", "", 1., ntime);
+
+      for(int np=0;np<wfnpulse[bn];np++){
+        std::cout<<wfampl[bn][np]<<" "<<ntime<<endl;
+   
+    }
+ 
+
     };
 
     if (NSampWaveForm > Ndata)
@@ -649,23 +664,25 @@ std::vector<std::vector<Double_t>> wftime(nblocks,
 
       // if(!(NadcCounter==NadcSampPulseAmp&&NadcSampPulseInt==NadcSampPulsePed&&NadcSampPulseInt==NadcSampPulseTime)){cout<<"!!!!! Problem Ndata !!!!!! "<<evt<<endl;ndataprob++;}
 
+      cout << "current event = " << evt << "   NadcCounter=" << NadcCounter << endl;
       for (Int_t iNdata = 0; iNdata < NadcCounter; iNdata++)
       {
         if (adcCounter[iNdata] == 2000)
           adcCounter[iNdata] = 1080; // nouveau numero du scintillateur attribue par Malek
         if (adcCounter[iNdata] == 2001)
           adcCounter[iNdata] = 1081; // nouveau numero du scintillateur attribue par Malek
-
+        cout<<"NDATA "<<iNdata<<endl;
         // determine HMS time correction
         if (iNdata == 0)
         {
           corr_time_HMS = adcSampPulseTime[iNdata] - (adcSampPulseTimeRaw[iNdata] / 16.) - tdcoffset[(int)(adcCounter[iNdata])];
+          cout << "HMS time correction event " << evt <<"  "<< corr_time_HMS <<" "<<tdcoffset[(int)(adcCounter[iNdata])]<< endl;
         }
         if (iNdata != 0)
         {
           if (TMath::Abs(corr_time_HMS - (adcSampPulseTime[iNdata] - adcSampPulseTimeRaw[iNdata] / 16. - tdcoffset[(int)(adcCounter[iNdata])])) > 0.001)
           {
-            //cout << "problem HMS time correction event " << evt <<"  "<< corr_time_HMS <<" "<<tdcoffset[(int)(adcCounter[iNdata])]<< endl;
+            cout << "problem HMS time correction event " << evt <<"  "<< corr_time_HMS <<" "<<tdcoffset[(int)(adcCounter[iNdata])]<< endl;
           }
         }
 
@@ -702,7 +719,7 @@ std::vector<std::vector<Double_t>> wftime(nblocks,
 
       for (Int_t i = 0; i < nblocks; i++)
       {
-        if (pres[i] == 1 && nsamp == ntime && preswf[i]==1 ) // if this block is present during event
+        if (pres[i] == 1 && preswf[i]==1 ) // if this block is present during event
         {
           for (Int_t it = 0; it < nsamp; it++)
           {
@@ -714,7 +731,7 @@ std::vector<std::vector<Double_t>> wftime(nblocks,
             }
           }
 
-       
+          cout << "BEFORE FIT HMS time correction event " << evt <<"  "<< corr_time_HMS << endl;
             Fitwf(i); // We call the fit here
     
 
@@ -770,6 +787,7 @@ std::vector<std::vector<Double_t>> wftime(nblocks,
                 amplwf[i] = wfampl[i][p];
               }
             } // pour prendre le pulse dont le temps est le plus proche de timerefacc
+            cout<<"AFTER FIT: bloc "<<i<<" pulse="<<p<<" time="<<wftime[i][p]<<" (4ns) ampl="<<wfampl[i][p]<<" reftime= "<<timeref[i]<<" (4ns) diff="<<(timerefacc + (corr_time_HMS - cortime[i]) / dt - 4, timerefacc + (corr_time_HMS - cortime[i]) / dt + 4)<<endl;
 
           } // end of loop over maxpulses
         } // end of condition over col,lin
@@ -876,27 +894,51 @@ if((int)evt % 1000 == 0){
     } // end if(NSampWaveForm<=Ndata)
 
     //Diagnostic Code for hsig_i
-    /*
+    
     int nonzero =0;
-    if ((int)evt % 1000 == 0) {
-      TFile *fout = new TFile(Form("/volatile/hallc/nps/kerver/ROOTfiles/debug_run_%d_evt_%lld.root",run, (long long)evt), "RECREATE");
+
+      TFile *fout = new TFile(Form("/volatile/hallc/nps/kerver/ROOTfiles/WF/waveforms/debug_run_%d_evt_%lld.root",run, (long long)evt), "RECREATE");
       for (int i = 0; i < nblocks; ++i) {
-        if (hsig_i[i] && hsig_i[i]->GetEntries() > 0) nonzero++;
-        if (hsig_i[i]){
-          std::cout << "evt=" << evt << ", block=" << i
-          << ", integral=" << hsig_i[i]->Integral() << std::endl;
-         hsig_i[i]->Write(Form("hsig_block_%d", i));
+        //if (hsig_i[i] && hsig_i[i]->GetEntries() > 0) nonzero++;
+       // if (hsig_i[i]){
+        //  std::cout << "evt=" << evt << ", block=" << i
+       //   << ", integral=" << hsig_i[i]->Integral() << std::endl;
+       //  hsig_i[i]->Write(Form("hsig_block_%d", i));
+
+
+         if(i==selectblock){
+         TCanvas *c2 = new TCanvas("c2", "c2", 1000, 800);
+         c2->cd();
+         c2->Update();
+         hsig_i[i]->Draw();
+         c2->Update();
+             for (Int_t p = 0; p < TMath::Max(wfnpulse[i], 1); p++)
+             {
+   
+                 cout << "pulse n:" << p
+                      << " time initial=" << (wftime[i][p] - corr_time_HMS + cortime[i] + timerefacc * dt) / dt + timeref[i] << "(4ns)"
+                      << " time corrected=" << wftime[i][p] << "(ns)"
+                      << " ampl=" << wfampl[i][p] << " (mV)" << endl;
+             }
+             //break;
+   
+         }
+        //}
+
+
         }
-      }
-      fout->Close();
-      delete fout;
-    }
+
+        fout->Close();
+      delete fout;      
+      
+      
+    
       
     //end of diagnostic snippet 
-*/
+
 
     for (int i = 0; i < nblocks; ++i) {
-      delete hsig_i[i];
+   //   delete hsig_i[i];
   }
   
 //std::cout << "evt=" << evt << ": " << nonzero << " non-empty histograms\n";
@@ -965,8 +1007,7 @@ if((int)evt % 1000 == 0){
  auto h_h2time = df_final.Histo1D(m_h2time ,"h2time");
 
   // Save the dataframe to the output ROOT file
- // TString rootfilePath = Form("/volatile/hallc/nps/kerver/ROOTfiles/WF/nps_production_%d_%d_%d_interactive_allwf.root", run, seg,nthreads);
-  TString rootfilePath = Form("../nps_production_wf_%d_%d_%d.root", run, seg,nthreads);
+  TString rootfilePath = Form("/volatile/hallc/nps/kerver/ROOTfiles/WF/waveforms/nps_production_%d_%d_%d_interactive_allwf.root", run, seg,nthreads);
   auto columnNames = df_final.GetColumnNames();
   for (const auto &col : columnNames) {
    // std::cout << col << std::endl;
