@@ -527,7 +527,8 @@ std::vector<std::vector<Double_t>> wftime(nblocks,
             wftime[bn][wfnpulse[bn]] = hsig_i[bn]->GetBinCenter(it + 4); // get the time of the pulse found
 
             // flag for the good pulse
-            if (TMath::Abs(wftime[bn][wfnpulse[bn]] - timeref[bn] +(corr_time_HMS - cortime[bn]) / dt - timerefacc) < 4.)
+           //if (TMath::Abs(wftime[bn][wfnpulse[bn]] - timeref[bn] +(corr_time_HMS - cortime[bn]) / dt - timerefacc) < 4.)
+            if (TMath::Abs(wftime[bn][wfnpulse[bn]] - timeref[bn]) < 4.)
             {
               good = 1;
              //cpulse = wfnpulse[bn];
@@ -744,7 +745,8 @@ ROOT::Math::WrappedMultiTF1 wfunc(*finter[bn], finter[bn]->GetNdim());
 ROOT::Fit::Fitter fitter;
 auto &cfg = fitter.Config();
 //fitter.Config().SetMinimizer("Minuit2", "Migrad");
-cfg.SetMinimizer("Minuit2", "Migrad");
+//cfg.SetMinimizer("Minuit2", "Migrad");
+cfg.SetMinimizer("Minuit2", "MINIMIZE");
 //auto &mopts = fitter.Config().MinimizerOptions();
 auto &mopts = cfg.MinimizerOptions();
 mopts.SetStrategy(0);
@@ -761,14 +763,15 @@ cfg.ParSettings(ip).Fix();
 for (int ip = 1; ip < nFloat; ++ip)
 cfg.ParSettings(ip).Release();
 
-if(good == 0 && wfnpulse[bn]>1){
+//if(good == 0 && wfnpulse[bn]>1){
+  if(good == 0){
   //cout<<"SET LIMITS HERE "<<wfnpulse[bn]<< endl;  
   cfg.ParSettings(3 + 2*(wfnpulse[bn]-1)).SetLowerLimit(0.05);
   cfg.ParSettings(3 + 2*(wfnpulse[bn]-1)).SetUpperLimit(10);
-  cfg.ParSettings(3 + 2*(wfnpulse[bn]-1)).Fix();        // pin it at your seed = 0.05
-   finter[bn]->SetParameter(3 + 2*(wfnpulse[bn]-1), 0.05);
-  }
+  if(wfnpulse[bn]>1)cfg.ParSettings(3 + 2*(wfnpulse[bn]-1)).Fix();        // pin it at your seed = 0.05
 
+   finter[bn]->SetParameter(3 + 2*(wfnpulse[bn]-1), 2.);
+  }
 
 cfg.ParSettings(0).Fix();  
 /*/
@@ -790,11 +793,24 @@ if (!ok) {
   std::cerr<<"Failed once for event "<<evt<<", block "<<bn<<"\n";
 }
 
-if(good == 0 && wfnpulse[bn]>1){
-  //mopts.SetStrategy(1);
-  cfg.ParSettings(3 + 2*(wfnpulse[bn]-1)).Release();  
+cfg.ParSettings(3 + 2*(wfnpulse[bn]-1)).Release();  
+if(good == 0 && wfnpulse[bn]>1 && ok){
+  //if a real pulse is found save the fit result first before releasing the ref pulse params
+  auto &tempresult = fitter.Result();
+  chi2[bn] = tempresult.Chi2()/tempresult.Ndf();
+      
+  for (Int_t p = 0; p < wfnpulse[bn]; ++p) {
+    wfampl[bn][p] = tempresult.Parameter(3 + 2*p);
+    wftime[bn][p]  = tempresult.Parameter(2 + 2*p)*dt                     // convert bins → ns
+               + corr_time_HMS                // add HMS correction
+               - cortime[bn]                  // subtract block‐by‐block cable delay
+               - timerefacc*dt;               // subtract your reference‐time offset
+}  
+
+//cfg.ParSettings(3 + 2*(wfnpulse[bn]-1)).Release(); 
   ok = fitter.LeastSquareFit(data);
   }
+
 
 /*
 for(int p=0; p<26;p++){
@@ -818,14 +834,15 @@ if (!ok) {
   // retry just this one with a tougher configuration
   cout<<"FAILED Again, retry"<<endl;
   cfg.MinimizerOptions().SetStrategy(2);
-  mopts.SetPrintLevel(1);
+ // mopts.SetPrintLevel(1);
   cfg.MinimizerOptions().SetMaxIterations(5000);
   ok = fitter.LeastSquareFit(data);
 }
 if (!ok) {
   std::cerr<<"STILL Fit failed for event "<<evt<<", block "<<bn<<"\n";
  failcount++;
-  for (int p = 0; p < wfnpulse[bn]; p++)
+ if(good == 0 && wfnpulse[bn]>1) return;
+ for (int p = 0; p < wfnpulse[bn]; p++)
   {
   wftime[bn][p] = -1000;
   wfampl[bn][p] = -1000;
@@ -1059,7 +1076,6 @@ chi2[bn] = tempchi2/ndf;
       }
 
       // Fit de la wf
-      
           for (Int_t i = 0; i < nblocks; i++)
       {
         if (pres[i] == 1 && preswf[i]==1 ) // if this block is present during event
