@@ -98,13 +98,9 @@ void TEST_2(int run, int seg, int threads)
 {
   TStopwatch t;
   t.Start();
-
-  // ENABLE MT
   int nthreads = 6;// or any number
   nthreads = threads;
-  ROOT::EnableImplicitMT(nthreads);
-  std::cout << "Implicit MT enabled: " << ROOT::IsImplicitMTEnabled() << "\n";
-  std::cout << "Number of threads: " << ROOT::GetThreadPoolSize() << "\n";
+  
 
   // BUILD TCHAIN
   TChain chain("T");
@@ -119,7 +115,7 @@ void TEST_2(int run, int seg, int threads)
   }
   testOpen->Close();
 
-TString outFile = Form("/volatile/hallc/nps/kerver/ROOTfiles/WF/nps_production_%d_%d_%d_interactive_final.root", run, seg,nthreads);
+TString outFile = Form("/volatile/hallc/nps/kerver/ROOTfiles/WF/nps_production_%d_%d_%d_interactive_infheap_test.root", run, seg,nthreads);
 
 if (!FastCloneAndFilter(filename, outFile)) {
   std::cerr<<"Clone failed!\n";
@@ -127,6 +123,13 @@ if (!FastCloneAndFilter(filename, outFile)) {
 }
 cout <<"I/O Copy time = "<<t.RealTime()<<endl;
 t.Continue();
+
+
+  // ENABLE MT
+ // ROOT::EnableImplicitMT(nthreads);
+  std::cout << "Implicit MT enabled: " << ROOT::IsImplicitMTEnabled() << "\n";
+  std::cout << "Number of threads: " << ROOT::GetThreadPoolSize() << "\n";
+
 
 
 
@@ -165,7 +168,7 @@ chain.SetBranchStatus("NPS.cal.fly.adcSampPulseTimeRaw",1);
   // Define a new RDataFrame that processes only 1% of the events
   auto nEventsToProcess = nEntriesDF / 1000;
   //auto df1percent = df.Range(0, nEventsToProcess);
-  //auto df1percent = df.Range(9999, 15000);
+  auto df1percent = df.Range(9999, 15000);
 
   Double_t dt = 4.;                                    // time bin (sample) width (4 ns), the total time window is then ntime*dt
   const int nslots = 1104;                             // nb maximal de slots dans tous les fADC
@@ -273,8 +276,8 @@ chain.SetBranchStatus("NPS.cal.fly.adcSampPulseTimeRaw",1);
      filetime.close();
 
   // Load only required branches into dataframe
-  auto df2 = df.Define("NSampWaveForm", "Ndata.NPS.cal.fly.adcSampWaveform")
-   // auto df2 = df1percent.Define("NSampWaveForm", "Ndata.NPS.cal.fly.adcSampWaveform")
+ // auto df2 = df.Define("NSampWaveForm", "Ndata.NPS.cal.fly.adcSampWaveform")
+    auto df2 = df1percent.Define("NSampWaveForm", "Ndata.NPS.cal.fly.adcSampWaveform")
                  .Define("SampWaveForm", "NPS.cal.fly.adcSampWaveform")
                  .Define("NadcCounter", "Ndata.NPS.cal.fly.adcCounter")
                  .Define("adcCounter", "NPS.cal.fly.adcCounter")
@@ -386,10 +389,13 @@ timerefacc = (calodist - 9.5) / (3.e8 * 1.e-9 * 4);
 
 	  //TF1 *finter[nblocks];
     std::vector<std::unique_ptr<TF1>> finter(nblocks); //object is now thread-local
-    TH1F *hsig_i[nblocks];
+   // TH1F *hsig_i[nblocks];
+   std::vector<TH1F*> hsig_i(nblocks, nullptr);
     //Int_t pres[nblocks] = {0};
     std::vector<Int_t> pres(nblocks, 0);
-    Double_t signal[nblocks][ntime];
+  //  Double_t signal[nblocks][ntime];
+  std::vector<Double_t> signal(nblocks * ntime);
+
     Int_t bloc, nsamp;
 
     Double_t enertot = 0.;
@@ -968,13 +974,15 @@ chi2[bn] = tempchi2/ndf;
         hsig_i[i]->GetYaxis()->SetTitle("(mV)");
         hsig_i[i]->GetYaxis()->SetLabelSize(0.05);
 
+        /*
         for (Int_t j = 0; j < ntime; j++)
         {
           signal[i][j] = 0;
         }
+          */
 
       } // liste de presence des blocs! pres=0 si bloc absent, pres=1 s'il est present
-
+      std::fill(signal.begin(), signal.end(), 0.);
       // Extract the data from the variable SampWaveForm[] (NPS.cal.fly.adcSampWaveform)
 
       int ns = 0; // ns represent for a given event the element number of the NPS.cal.fly.adcSampWaveform variable
@@ -1009,8 +1017,10 @@ chi2[bn] = tempchi2/ndf;
             {
               if (bloc > -0.5 && bloc < nblocks)
               {
-                signal[bloc][it] = SampWaveForm[ns];
-                hsig_i[bloc]->SetBinContent(it + 1, signal[bloc][it]);
+                //signal[bloc][it] = SampWaveForm[ns];
+                signal[ bloc * ntime + it ] = SampWaveForm[ns];
+                //hsig_i[bloc]->SetBinContent(it + 1, signal[bloc][it]);
+                hsig_i[bloc]->SetBinContent(it + 1, signal[bloc*ntime + it]);
               }
               ns++;
             }
@@ -1160,26 +1170,36 @@ chi2[bn] = tempchi2/ndf;
         for (Int_t it = 0; it < nsamp; it++)
         {
 
-          integ[i] += signal[i][it];
-          integtot += signal[i][it];
+          //integ[i] += signal[i][it];
+         //integtot += signal[i][it];
+         integ[i] += signal[i*ntime + it];
+         integtot += signal[i*ntime + it];
 
           if (it > binmin && it < binmax)
           { // cosmic pulse window
 
-            ener[i] += signal[i][it];
-            enertot += signal[i][it];
+            //ener[i] += signal[i][it];
+           // enertot += signal[i][it];
+           ener[i] += signal[i*ntime + it];
+           enertot += signal[i*ntime + it];
           }
 
           if (!(it > binmin && it < binmax))
           {
-            bkg[i] += signal[i][it];
+            //bkg[i] += signal[i][it];
+            bkg[i] += signal[i*ntime + it];
+
           } // background window
 
-          if (signal[i][it] > sigmax[i])
+         // if (signal[i][it] > sigmax[i])
+         if (signal[i*ntime + it] > sigmax[i])
           {
             time[i] = it;
-            sigmax[i] = signal[i][it];
-            ampl[i] = signal[i][it];
+           // sigmax[i] = signal[i][it];
+            //ampl[i] = signal[i][it];
+            sigmax[i] = signal[i*ntime + it];
+            ampl[i] = signal[i*ntime + it];
+
           } // determine the pulse maximum
         }
 
@@ -1193,7 +1213,8 @@ chi2[bn] = tempchi2/ndf;
 
           if (!(it > binmin && it < binmax))
           {
-            noise[i] += (signal[i][it] - bkg[i]) * (signal[i][it] - bkg[i]) / (nsamp - (binmax - binmin - 1));
+            //noise[i] += (signal[i][it] - bkg[i]) * (signal[i][it] - bkg[i]) / (nsamp - (binmax - binmin - 1));
+            noise[i] += (signal[i*ntime+it] - bkg[i]) * (signal[i*ntime+it] - bkg[i]) / (nsamp - (binmax - binmin - 1));
           } // RMS of the bkg
         }
         noise[i] = TMath::Sqrt(noise[i]);
@@ -1208,22 +1229,26 @@ chi2[bn] = tempchi2/ndf;
 
         for (Int_t it = time[i]; it < nsamp; it++)
         { // aller vers la droite du maximum
-          if ((signal[i][it] - bkg[i]) >= ampl2[i] * 0.5)
+          //if ((signal[i][it] - bkg[i]) >= ampl2[i] * 0.5)
+          if ((signal[i*ntime + it] - bkg[i]) >= ampl2[i]*0.5)
           {
             max50 = it;
           }
-          if ((signal[i][it] - bkg[i]) >= ampl2[i] * 0.1)
+          //if ((signal[i][it] - bkg[i]) >= ampl2[i] * 0.1)
+          if ((signal[i*ntime + it] - bkg[i]) >= ampl2[i]*0.1)
           {
             max90 = it;
           }
         }
         for (Int_t it = time[i]; it > -0.5; it--)
         { // aller vers la gauche du maximum
-          if ((signal[i][it] - bkg[i]) >= ampl2[i] * 0.5)
+          //if ((signal[i][it] - bkg[i]) >= ampl2[i] * 0.5)
+          if ((signal[i*ntime + it] - bkg[i]) >= ampl2[i]*0.5)
           {
             min50 = it;
           }
-          if ((signal[i][it] - bkg[i]) >= ampl2[i] * 0.1)
+          //if ((signal[i][it] - bkg[i]) >= ampl2[i] * 0.1)
+          if ((signal[i*ntime + it] - bkg[i]) >= ampl2[i]*0.1)
           {
             min90 = it;
           }
@@ -1271,7 +1296,10 @@ if((int)evt % 1000 == 0){
 */
 
     for (int i = 0; i < nblocks; ++i) {
+      if (hsig_i[i]) {
       delete hsig_i[i];
+      hsig_i[i] = nullptr;
+      }
   }
   
 //std::cout << "evt=" << evt << ": " << nonzero << " non-empty histograms\n";
@@ -1385,9 +1413,48 @@ df_final.Snapshot("WF", outFile, {"chi2","ampl","amplwf","wfnpulse","Sampampl","
 */
 
 ///////////
+cout<<"About to Snapshot"<<endl;
+TString tempout = Form("../nps_production_%d_%d_%d_temp.root", run, seg,nthreads);
 ROOT::RDF::RSnapshotOptions opts;
-opts.fMode = "UPDATE";  
-df_final.Snapshot("WF", outFile, {"chi2","ampl","amplwf","wfnpulse","Sampampl","Samptime","timewf","enertot","integtot","pres","corr_time_HMS","h1time","h2time","evt","wfampl","wftime"},opts);
+opts.fMode = "RECREATE";  
+df_final.Snapshot("WF", tempout, {"chi2","ampl","amplwf","wfnpulse","Sampampl","Samptime","timewf","enertot","integtot","pres","corr_time_HMS","h1time","h2time","evt","wfampl","wftime"},opts);
+t.Stop();
+std::cout
+  <<"=== Snapshot done. Elapsed real time: "<<t.RealTime()
+  <<" s, CPU time: "<<t.CpuTime()
+  <<" s ===\n";
+t.Continue();
+
+// 1) Open the file you already built at the top:
+TFile *fout = TFile::Open(outFile, "UPDATE");
+if (!fout || fout->IsZombie()) {
+  std::cerr<<"ERROR: could not open "<<outFile<<" for UPDATE\n";
+  return;
+}
+
+// 2) Open the WF-only file you just wrote:
+TFile *fwf = TFile::Open(tempout, "READ");
+if (!fwf || fwf->IsZombie()) {
+  std::cerr<<"ERROR: could not open "<<tempout<<"\n";
+  fout->Close();
+  return;
+}
+
+// 3) Copy just the WF tree key(s):
+TKey *key = static_cast<TKey*>(
+    fwf->GetListOfKeys()->FindObject("WF")
+);
+if (!key) {
+  std::cerr<<"ERROR: WF not found in "<<tempout<<"\n";
+} else {
+  TObject *obj = key->ReadObj();   // a TTree*
+  fout->cd();                       // switch to the big file
+  obj->Write("WF");                 // write it in-place
+}
+
+// 4) Clean up
+fwf->Close();
+fout->Close();
 
    // h_h1time->Write();  // Write histogram to the output file
    // h_h2time->Write();  // Write histogram to the output file
