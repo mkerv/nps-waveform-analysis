@@ -34,6 +34,7 @@
 #include "Fit/BinData.h"
 #include "Fit/DataOptions.h"
 #include "Math/WrappedMultiTF1.h"
+#include <TKey.h>
 
 
 template <typename T>
@@ -52,7 +53,7 @@ const int maxpulses = 4;         // nb maximal de pulses dans la fentre ntime
 const int nsignals = nblocks * maxpulses;
 const int maxwfpulses = 12; // nb maximal de pulses que la wfa peut trouver
 const int ntemp = 56;       // nb of temp sensors
-int failcount=0;
+std::atomic<int> nFitFailures{0};
 
 Double_t timeref[nblocks];
 Float_t cortime[nblocks];
@@ -65,38 +66,43 @@ std::vector<std::vector<double>> interpX(nblocks),
                                 interpY(nblocks);
 
 ///////////////////////////////////////////////////////////// FIT FUNCTION USED AND SCHEMATICS /////////////////////////////////////////////////////////////
+bool FastCloneAndFilter(const TString &inName,
+  const TString &outName) {
+TFile *fin  = TFile::Open(inName,  "READ");
+if (!fin || fin->IsZombie()) return false;
+TFile *fout = TFile::Open(outName, "RECREATE");
+if (!fout|| fout->IsZombie()) { fin->Close(); return false; }
 
+// copy all non-T keys
+for (auto k : *fin->GetListOfKeys()) {
+TKey *key = static_cast<TKey*>(k);
+TString name(key->GetName());
+if (name == "T") continue;
+//if (key->GetName() == "T") continue;
+fout->cd();
+key->ReadObj()->Write();
+}
+// clone T without the big branch
+TTree *tin = (TTree*)fin->Get("T");
+tin->SetBranchStatus("NPS.cal.fly.adcSampWaveform", 0);
+TTree *tout = tin->CloneTree(-1, "fast");
+fout->cd();
+tout->Write("T");
+
+fout->Close();
+fin->Close();
+return true;
+}
 /////////////////////////////////////////////////////////////MAIN FUNCTION ///////////////////////////////////////////////////////////////////////
-
 void TEST_2(int run, int seg, int threads)
 {
-
-  // FIT FUNCTION redefined as a lambda function for MT use
-  /*
-  auto func = [=](Double_t *x, Double_t *par)
-  {
-    if (!par){
-      cout << "NULL PARAM POINTER!" <<endl;
-      return 0.0;  // not checking if par[0] is nullptr
-    } 
-
-    Int_t j = (int)(par[0]);
-    Double_t val = 0;
-    for (Int_t p = 0; p < maxwfpulses; p++)
-    {
-      if (x[0] - par[2 + 2 * p] > 1 && x[0] - par[2 + 2 * p] < 109)
-        val += par[3 + 2 * p] * interpolation[j]->Eval(x[0] - par[2 + 2 * p]);
-    }
-    return val + par[1];
-  };
-*/
   TStopwatch t;
   t.Start();
 
   // ENABLE MT
   int nthreads = 6;// or any number
   nthreads = threads;
- // ROOT::EnableImplicitMT(nthreads);
+  ROOT::EnableImplicitMT(nthreads);
   std::cout << "Implicit MT enabled: " << ROOT::IsImplicitMTEnabled() << "\n";
   std::cout << "Number of threads: " << ROOT::GetThreadPoolSize() << "\n";
 
@@ -112,7 +118,38 @@ void TEST_2(int run, int seg, int threads)
     return;
   }
   testOpen->Close();
+
+TString outFile = Form("/volatile/hallc/nps/kerver/ROOTfiles/WF/nps_production_%d_%d_%d_interactive_final.root", run, seg,nthreads);
+
+if (!FastCloneAndFilter(filename, outFile)) {
+  std::cerr<<"Clone failed!\n";
+  return;
+}
+cout <<"I/O Copy time = "<<t.RealTime()<<endl;
+t.Continue();
+
+
+
   chain.Add(filename);
+  chain.SetBranchStatus("*", 0);
+// 2) …then enable _just_ the ones your analysis uses:
+chain.SetBranchStatus("g.evnum",1);
+chain.SetBranchStatus("Ndata.NPS.cal.fly.adcSampWaveform",1);
+chain.SetBranchStatus("Ndata.NPS.cal.fly.adcCounter",1);
+chain.SetBranchStatus("Ndata.NPS.cal.fly.adcSampPulseAmp",1);
+chain.SetBranchStatus("Ndata.NPS.cal.fly.adcSampPulseInt",1);
+chain.SetBranchStatus("Ndata.NPS.cal.fly.adcSampPed",1);
+chain.SetBranchStatus("Ndata.NPS.cal.fly.adcSampPulseTime",1);
+chain.SetBranchStatus("Ndata.NPS.cal.fly.adcSampPulseTimeRaw",1);
+chain.SetBranchStatus("NPS.cal.fly.adcSampWaveform",1);
+chain.SetBranchStatus("NPS.cal.fly.adcCounter",1);
+chain.SetBranchStatus("NPS.cal.fly.adcSampPulseAmp",1);
+chain.SetBranchStatus("NPS.cal.fly.adcSampPulseInt",1);
+chain.SetBranchStatus("NPS.cal.fly.adcSampPed",1);
+chain.SetBranchStatus("NPS.cal.fly.adcSampPulseTime",1);
+chain.SetBranchStatus("NPS.cal.fly.adcSampPulseTimeRaw",1);
+
+
   auto nEntries = chain.GetEntries(); 
   std::cout << "Chain has " << nEntries << " entries.\n";
   
@@ -128,7 +165,7 @@ void TEST_2(int run, int seg, int threads)
   // Define a new RDataFrame that processes only 1% of the events
   auto nEventsToProcess = nEntriesDF / 1000;
   //auto df1percent = df.Range(0, nEventsToProcess);
-  auto df1percent = df.Range(9999, 15000);
+  //auto df1percent = df.Range(9999, 15000);
 
   Double_t dt = 4.;                                    // time bin (sample) width (4 ns), the total time window is then ntime*dt
   const int nslots = 1104;                             // nb maximal de slots dans tous les fADC
@@ -152,9 +189,6 @@ void TEST_2(int run, int seg, int threads)
   {
 
     filetdc >> tdcoffset[i];
-
-    // filewf.open(Form("/w/hallc-scshelf2102/nps/wassim/ANALYSIS/Work_Analysis/WF/BK_TEST/TEST_BOOM/5217-5236/fit_e_runs/RWF/ref_wf_%d.txt",i));
-    // filewf.open(Form("/w/hallc-scshelf2102/nps/wassim/ANALYSIS/Work_Analysis/WF/BK_TEST/TEST_BOOM/1969-1982/RWF/ref_wf_%d.txt",i));
 
     if (run > 6183 && run < 7500)
     {
@@ -204,28 +238,6 @@ void TEST_2(int run, int seg, int threads)
     preswf[i] = 0;
     //interpolation[i] = new ROOT::Math::Interpolator(ntime, ROOT::Math::Interpolation::kCSPLINE);
 
-    /*
-    // Fill array with reference waveform (x,y) for each block. set reftime @ ymax
-    if (filewf.is_open())
-    {
-      filewf >> timeref[i] >> dum1; // used for my ref shapes (be careful in switching on the mean method !!!!!!!!!!!!!!!!!)
-
-      ymax = 0;
-      for (Int_t it = 0; it < ntime; it++)
-      {
-        filewf >> x[it] >> y[it];
-        if (y[it] > ymax)
-        {
-          ymax = y[it];
-          timeref[i] = x[it];
-        }
-      }
-      interpolation[i]->SetData(ntime, x, y);
-      preswf[i]=1;
-    }
-    filewf.close();
-    */
-    // cout<<i<<" "<<timeref[i]<<endl;
     ymax = 0;
     if (filewf.is_open()){
     filewf >> timeref[i] >> dum1;
@@ -261,8 +273,8 @@ void TEST_2(int run, int seg, int threads)
      filetime.close();
 
   // Load only required branches into dataframe
- // auto df2 = df.Define("NSampWaveForm", "Ndata.NPS.cal.fly.adcSampWaveform")
-  auto df2 = df1percent.Define("NSampWaveForm", "Ndata.NPS.cal.fly.adcSampWaveform")
+  auto df2 = df.Define("NSampWaveForm", "Ndata.NPS.cal.fly.adcSampWaveform")
+   // auto df2 = df1percent.Define("NSampWaveForm", "Ndata.NPS.cal.fly.adcSampWaveform")
                  .Define("SampWaveForm", "NPS.cal.fly.adcSampWaveform")
                  .Define("NadcCounter", "Ndata.NPS.cal.fly.adcCounter")
                  .Define("adcCounter", "NPS.cal.fly.adcCounter")
@@ -276,6 +288,7 @@ void TEST_2(int run, int seg, int threads)
                  .Define("adcSampPulseTime", "NPS.cal.fly.adcSampPulseTime")
                  .Define("NadcSampPulseTimeRaw", "Ndata.NPS.cal.fly.adcSampPulseTimeRaw")
                  .Define("adcSampPulseTimeRaw", "NPS.cal.fly.adcSampPulseTimeRaw")
+                 /*
                  .Define("hT1_tdcTime", "T.hms.hT1_tdcTime")
                  .Define("hT2_tdcTime", "T.hms.hT2_tdcTime")
                  .Define("hT3_tdcTime", "T.hms.hT3_tdcTime")
@@ -300,6 +313,7 @@ void TEST_2(int run, int seg, int threads)
                  .Define("pz", "H.gtr.pz")
                  .Define("cernpe", "H.cer.npeSum")
                  .Define("caltracknorm", "H.cal.etottracknorm")
+                 */
                  //.Define("evt", "rdfentry_") // define event number from row of rdataframe for troubleshoooting (threadsafe)
                  .Define("evt", "g.evnum"); // define event number from row of rdataframe for troubleshoooting (threadsafe)
                  //.Filter("TMath::Abs(H.gtr.th) < 0.08")
@@ -352,11 +366,6 @@ timerefacc = (calodist - 9.5) / (3.e8 * 1.e-9 * 4);
   } // 1st pass analysis, when the macro analyse_wassim.C is not executed yet (30 is the default value)
   // 2nd pass analysis, when the macro analyse_wassim.C is already executed. If not, comment the following lines
 
-  /////TODO: convert all needed treeout histos to df.Histo1D() and add to dataframe
-  //TH1F *h1time = new TH1F("h1time", "pulse (>20mV) shift (4*ns units) relatively to elastic refwf (all found pulses included)", 200, -50, 50);
-  //TH1F *h2time = new TH1F("h2time", "pulse (>20mV) time (ns) (all found pulses included)", 200, -100, 100);
-
-
   ROOT::RDF::TH1DModel m_h1time("h1time", "pulse (>20mV) shift (4*ns units) relatively to elastic refwf (all found pulses included)", 200, -50, 50);
   ROOT::RDF::TH1DModel m_h2time("h2time", "pulse (>20mV) time (ns) (all found pulses included)", 200, -100, 100);
  
@@ -367,14 +376,6 @@ timerefacc = (calodist - 9.5) / (3.e8 * 1.e-9 * 4);
   /////// ANALYZE //////////////////////////////////////////////////////////
 
   // this is where sequential event loop was
-
-  // HMS CUTS
-/*
-  df2 = df2.Filter("TMath::Abs(H.gtr.th) < 0.08")
-            .Filter("TMath::Abs(H.gtr.ph) < 0.04")
-            .Filter("TMath::Abs(H.gtr.dp) < 10");
-
-*/
   ////////Lambda funtion for the per-event wf analysis/////////
   auto analyze = [=](Int_t NSampWaveForm, const ROOT::VecOps::RVec<Double_t> &SampWaveForm, Double_t evt, Int_t NadcCounter, ROOT::VecOps::RVec<Double_t> &adcCounter, const ROOT::VecOps::RVec<Double_t> adcSampPulseTime, const ROOT::VecOps::RVec<Double_t> adcSampPulseTimeRaw, const ROOT::VecOps::RVec<Double_t> adcSampPulseAmp, const ROOT::VecOps::RVec<Double_t> adcSampPulseInt, const ROOT::VecOps::RVec<Double_t> adcSampPulsePed)
   {
@@ -732,13 +733,6 @@ for (int ib = 1; ib <= nBins; ++ib) {
 
 
 
-for(int p=0; p<26;p++){
-  //std::cout<<p<<" : "<<finter[bn]->GetParameter(p)<<endl;
-}
-
-
-
-
 //Wrap TF1 into a IModelFunction via WrappedMultiTF1:
 ROOT::Math::WrappedMultiTF1 wfunc(*finter[bn], finter[bn]->GetNdim());
 //Configure fitter
@@ -774,7 +768,7 @@ cfg.ParSettings(ip).Release();
   }
 
 cfg.ParSettings(0).Fix();  
-/*/
+/*
 // lock the fake pulse amplitudes to never go below 0.05:
 if(good ==0){
 cfg.ParSettings(3 + 2*(wfnpulse[bn]-1)).SetLowerLimit(0.05);
@@ -807,9 +801,10 @@ if(good == 0 && wfnpulse[bn]>1 && ok){
                - timerefacc*dt;               // subtract your reference‐time offset
 }  
 
-//cfg.ParSettings(3 + 2*(wfnpulse[bn]-1)).Release(); 
+// cfg.ParSettings(3 + 2*(wfnpulse[bn]-1)).Release(); 
   ok = fitter.LeastSquareFit(data);
   }
+
 
 
 /*
@@ -832,15 +827,16 @@ if (!ok) {
 }
 if (!ok) {
   // retry just this one with a tougher configuration
-  cout<<"FAILED Again, retry"<<endl;
+ // cout<<"FAILED Again, retry"<<endl;
   cfg.MinimizerOptions().SetStrategy(2);
  // mopts.SetPrintLevel(1);
   cfg.MinimizerOptions().SetMaxIterations(5000);
   ok = fitter.LeastSquareFit(data);
 }
 if (!ok) {
-  std::cerr<<"STILL Fit failed for event "<<evt<<", block "<<bn<<"\n";
- failcount++;
+//  std::cerr<<"STILL Fit failed for event "<<evt<<", block "<<bn<<"\n";
+ //failcount++;
+ nFitFailures.fetch_add(1, std::memory_order_relaxed);
  if(good == 0 && wfnpulse[bn]>1) return;
  for (int p = 0; p < wfnpulse[bn]; p++)
   {
@@ -1344,19 +1340,57 @@ if((int)evt % 1000 == 0){
  auto h_h2time = df_final.Histo1D(m_h2time ,"h2time");
 
   // Save the dataframe to the output ROOT file
-  TString rootfilePath = Form("/volatile/hallc/nps/kerver/ROOTfiles/WF/nps_production_%d_%d_%d_interactive_allwf_0.05fix_2mvthresh.root", run, seg,nthreads);
+  //TString rootfilePath = Form("/volatile/hallc/nps/kerver/ROOTfiles/WF/nps_production_%d_%d_%d_interactive_allwf_0.05fix_2mvthresh.root", run, seg,nthreads);
  // TString rootfilePath = Form("../nps_production_wf_%d_%d_%d.root", run, seg,nthreads);
   auto columnNames = df_final.GetColumnNames();
   for (const auto &col : columnNames) {
    // std::cout << col << std::endl;
 }
-df_final.Snapshot("treeout", rootfilePath, {"chi2","ampl","amplwf","wfnpulse","Sampampl","Samptime","timewf","enertot","integtot","pres","corr_time_HMS","h1time","h2time","evt","wfampl","wftime"});
 
-    // Open output file and save histogram
-    TFile outFile(rootfilePath, "UPDATE");
-    h_h1time->Write();  // Write histogram to the output file
-    h_h2time->Write();  // Write histogram to the output file
-    outFile.Close();
+//OLD WRITE OUT METHOD WORKS BUT SLOW
+////////////
+/*
+
+
+  TFile fin(filename, "READ");
+  TFile fout(outFile, "RECREATE");
+    // copy every key except the big tree “T”
+    TIter nextKey(fin.GetListOfKeys());
+    while (TKey* key = (TKey*)nextKey()) {
+      if (std::string(key->GetName()) == "T") continue;
+      TObject* obj = key->ReadObj();
+      fout.cd();
+      obj->Write(key->GetName());
+      delete obj;
+    }
+
+    // --- 3) Clone a slimmed‐down “T” (disable the huge waveform branch) ---
+    TTree* big = (TTree*)fin.Get("T");
+    big->SetBranchStatus("*", 1);
+    big->SetBranchStatus("NPS.cal.fly.adcSampWaveform",     0);
+    big->SetBranchStatus("Ndata.NPS.cal.fly.adcSampWaveform",0);
+    TTree* slim = big->CloneTree(-1, "fast");
+
+    fout.cd();
+    slim->Write("T");        // write your one-and-only slim T back
+    fout.Close();
+    fin.Close();
+
+
+// prepare the options
+ROOT::RDF::RSnapshotOptions opts;
+opts.fMode = "UPDATE";  
+df_final.Snapshot("WF", outFile, {"chi2","ampl","amplwf","wfnpulse","Sampampl","Samptime","timewf","enertot","integtot","pres","corr_time_HMS","h1time","h2time","evt","wfampl","wftime"},opts);
+
+*/
+
+///////////
+ROOT::RDF::RSnapshotOptions opts;
+opts.fMode = "UPDATE";  
+df_final.Snapshot("WF", outFile, {"chi2","ampl","amplwf","wfnpulse","Sampampl","Samptime","timewf","enertot","integtot","pres","corr_time_HMS","h1time","h2time","evt","wfampl","wftime"},opts);
+
+   // h_h1time->Write();  // Write histogram to the output file
+   // h_h2time->Write();  // Write histogram to the output file
 
   // Then safely write and delete at the end
   /*
@@ -1371,7 +1405,8 @@ df_final.Snapshot("treeout", rootfilePath, {"chi2","ampl","amplwf","wfnpulse","S
   // TTree was never written to output file???
 
   cout << "fin de l'analyse" << endl;
-  cout << "Failed fits: "<<failcount<<endl;
+  //cout << "Failed fits: "<<failcount<<endl;
+  std::cout << "Total failed fits: " << nFitFailures.load() << "\n";
   t.Stop();
   t.Print();
 }
