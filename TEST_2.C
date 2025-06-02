@@ -115,7 +115,7 @@ void TEST_2(int run, int seg, int threads)
   }
   testOpen->Close();
 
-TString outFile = Form("/volatile/hallc/nps/kerver/ROOTfiles/WF/nps_production_%d_%d_%d_interactive_infheap_test.root", run, seg,nthreads);
+TString outFile = Form("/volatile/hallc/nps/kerver/ROOTfiles/WF/nps_production_%d_%d_%d_interactive_infheap_test_sorted.root", run, seg,nthreads);
 
 if (!FastCloneAndFilter(filename, outFile)) {
   std::cerr<<"Clone failed!\n";
@@ -168,7 +168,7 @@ chain.SetBranchStatus("NPS.cal.fly.adcSampPulseTimeRaw",1);
   // Define a new RDataFrame that processes only 1% of the events
   auto nEventsToProcess = nEntriesDF / 1000;
   //auto df1percent = df.Range(0, nEventsToProcess);
-  auto df1percent = df.Range(9999, 15000);
+  auto df1percent = df.Range(9999, 12000);
 
   Double_t dt = 4.;                                    // time bin (sample) width (4 ns), the total time window is then ntime*dt
   const int nslots = 1104;                             // nb maximal de slots dans tous les fADC
@@ -1417,6 +1417,7 @@ cout<<"About to Snapshot"<<endl;
 TString tempout = Form("../nps_production_%d_%d_%d_temp.root", run, seg,nthreads);
 ROOT::RDF::RSnapshotOptions opts;
 opts.fMode = "RECREATE";  
+//opts.fBasketSize = 512 * 1024;        // 512 KB per basket
 df_final.Snapshot("WF", tempout, {"chi2","ampl","amplwf","wfnpulse","Sampampl","Samptime","timewf","enertot","integtot","pres","corr_time_HMS","h1time","h2time","evt","wfampl","wftime"},opts);
 t.Stop();
 std::cout
@@ -1424,6 +1425,72 @@ std::cout
   <<" s, CPU time: "<<t.CpuTime()
   <<" s ===\n";
 t.Continue();
+
+// 1) Open and tune baskets
+TFile *fin = TFile::Open(tempout, "READ");
+if (!fin || fin->IsZombie()) {
+  std::cerr<<"ERROR: could not open "<<tempout<<" for basket-tuning\n";
+  return;
+}
+//TTree *tin = (TTree*)fin->Get("WF");
+TTree* tin = static_cast<TTree*>(fin->Get("WF"));
+if (!tin) {
+  std::cerr<<"ERROR: WF not found in "<<tempout<<"\n";
+  fin->Close();
+  return;
+}
+tin->SetBasketSize("wfampl", 512*1024);   // 512 KB
+tin->SetBasketSize("wftime", 512*1024);
+
+tin->BuildIndex("evt");
+
+
+  // 3) Clone into your main file (atomic overwrite)
+  TFile *fout = TFile::Open(outFile, "UPDATE");
+  if (!fout || fout->IsZombie()) {
+    std::cerr<<"Cannot open output file "<<outFile<<"\n";
+    fin->Close();
+    return;
+  }
+  fout->cd();
+  auto tout = tin->CloneTree(-1);
+    // 4) (Optional) tune output baskets before write
+tout->SetBasketSize("wfampl", 512*1024);
+tout->SetBasketSize("wftime", 512*1024);
+  tout->BuildIndex("evt");
+
+/*
+  Long64_t nent = tin->GetEntries();
+for (Long64_t i = 0; i < nent; ++i) {
+  Long64_t entry = tin->GetEntryNumber(i);     // i-th smallest evt
+  tin->GetEntry(entry);
+  tout->Fill();
+}
+*/
+
+std::cout
+  <<"=== Sorting done. Elapsed real time: "<<t.RealTime()
+  <<" s, CPU time: "<<t.CpuTime()
+  <<" s ===\n";
+t.Continue();
+
+
+  tout->Write("WF", TObject::kOverwrite);
+  fout->Close();
+  fin->Close();
+
+ // MERGER METHOD STILL CORUUPOT BASKETS
+ /*
+TFileMerger merger;
+merger.OutputFile(outFile); 
+merger.AddFile(outFile);   // your big file
+merger.AddFile(tempout);   // the standalone WF file
+if (!merger.Merge()) {
+  std::cerr << "ERROR: TFileMerger failed to merge WF into " << outFile << "\n";
+  return;
+}
+  */
+/*
 
 // 1) Open the file you already built at the top:
 TFile *fout = TFile::Open(outFile, "UPDATE");
@@ -1455,7 +1522,7 @@ if (!key) {
 // 4) Clean up
 fwf->Close();
 fout->Close();
-
+*/
    // h_h1time->Write();  // Write histogram to the output file
    // h_h2time->Write();  // Write histogram to the output file
 
