@@ -35,6 +35,7 @@
 #include "Fit/DataOptions.h"
 #include "Math/WrappedMultiTF1.h"
 #include <TKey.h>
+#include "TThread.h"
 
 
 template <typename T>
@@ -810,8 +811,9 @@ chi2[bn] = tempchi2/ndf;
 
 
       // avoid threads creating hsig with same name at same time(before object deletion)
-        int tid = TThread::GetId();                          // or std::this_thread::get_id()
-        TString hname = Form("hsig_i_evt%.0f_thr%d_blk%d", evt, tid, i);
+      TThread* me = TThread::Self();
+      Long_t rootTid = me ? me->GetId() : -1;
+      TString hname = Form("hsig_i_evt%.0f_thr%ld_blk%d", evt, rootTid, i);
         hsig_i[i] = new TH1F(hname, hname, ntime, 0, ntime);
         //hsig_i[i] = new TH1F(Form("hsig_i%d", i), Form("hsig_i%d", i), ntime, 0, ntime);
         hsig_i[i]->SetLineColor(1);
