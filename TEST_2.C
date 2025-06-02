@@ -65,9 +65,6 @@ Double_t timerefacc = 0;   // en (-4ns) car le pic de timewf pousse vers -22ns
 std::vector<std::vector<double>> interpX(nblocks),
                                 interpY(nblocks);
 
-//using WfAmplArr = std::array<std::array<Double_t, maxwfpulses>, nblocks>;
-//using WfTimeArr = std::array<std::array<Double_t, maxwfpulses>, nblocks>;
-
 ///////////////////////////////////////////////////////////// FIT FUNCTION USED AND SCHEMATICS /////////////////////////////////////////////////////////////
 bool FastCloneAndFilter(const TString &inName,
   const TString &outName) {
@@ -294,38 +291,7 @@ chain.SetBranchStatus("NPS.cal.fly.adcSampPulseTimeRaw",1);
                  .Define("adcSampPulseTime", "NPS.cal.fly.adcSampPulseTime")
                  .Define("NadcSampPulseTimeRaw", "Ndata.NPS.cal.fly.adcSampPulseTimeRaw")
                  .Define("adcSampPulseTimeRaw", "NPS.cal.fly.adcSampPulseTimeRaw")
-                 /*
-                 .Define("hT1_tdcTime", "T.hms.hT1_tdcTime")
-                 .Define("hT2_tdcTime", "T.hms.hT2_tdcTime")
-                 .Define("hT3_tdcTime", "T.hms.hT3_tdcTime")
-                 .Define("hTRIG1_tdcTime", "T.hms.hTRIG1_tdcTime")
-                 .Define("hTRIG2_tdcTime", "T.hms.hTRIG2_tdcTime")
-                 .Define("hTRIG3_tdcTime", "T.hms.hTRIG3_tdcTime")
-                 .Define("hTRIG4_tdcTime", "T.hms.hTRIG4_tdcTime")
-                 .Define("hTRIG5_tdcTime", "T.hms.hTRIG5_tdcTime")
-                 .Define("hTRIG6_tdcTime", "T.hms.hTRIG6_tdcTime")
-                 //.Define("beta", "beta")
-                // .Define("caletracknorm", "caletracknorm")
-                 //.Define("caletottracknorm", "caletottracknorm")
-                // .Define("caletotnorm", "caletotnorm")
-                 .Define("vx", "H.react.x")
-                 .Define("vy", "H.react.y")
-                 .Define("vz", "H.react.z")
-                 .Define("dp", "H.gtr.dp")
-                 .Define("th", "H.gtr.th")
-                 .Define("ph", "H.gtr.ph")
-                 .Define("px", "H.gtr.px")
-                 .Define("py", "H.gtr.py")
-                 .Define("pz", "H.gtr.pz")
-                 .Define("cernpe", "H.cer.npeSum")
-                 .Define("caltracknorm", "H.cal.etottracknorm")
-                 */
-                 //.Define("evt", "rdfentry_") // define event number from row of rdataframe for troubleshoooting (threadsafe)
-                 .Define("evt", "g.evnum"); // define event number from row of rdataframe for troubleshoooting (threadsafe)
-                 //.Filter("TMath::Abs(H.gtr.th) < 0.08")
-                 //.Filter("TMath::Abs(H.gtr.ph) < 0.04")
-                 //.Filter("TMath::Abs(H.gtr.dp) < 10");
-
+                 .Define("evt", "g.evnum"); // define event number from row of rdataframe for troubleshoooting (threadsafe
   // Output rootfile
   // Other variables
   Int_t ilinc, icolc, inp;
@@ -425,33 +391,12 @@ timerefacc = (calodist - 9.5) / (3.e8 * 1.e-9 * 4);
     Int_t nsampwf = 0;
 
     std::vector<Int_t> wfnpulse(nblocks, -100);
-    //Double_t wfampl[nblocks][maxwfpulses];
-    //Double_t wftime[nblocks][maxwfpulses];
 
-//std::vector<std::vector<Double_t>> wfampl(nblocks,
- // std::vector<Double_t>(maxwfpulses, -100));
-//std::vector<std::vector<Double_t>> wftime(nblocks,
- // std::vector<Double_t>(maxwfpulses, -100));
-
-// Build a small RVec<Double_t> of length=maxwfpulses, all = -100
-//ROOT::RVec<Double_t> tmp(maxwfpulses, -100);
+    
 
 // Now create an outer RVec that contains nblocks copies of tmp:
 ROOT::RVec<Double_t> wfampl(nblocks * maxwfpulses, -100.0);
 ROOT::RVec<Double_t> wftime(nblocks * maxwfpulses, -100.0);
-/*
-    // Wrap them immediately in std::array so we can return them later
-    WfAmplArr wfampl;  // means Double_t wfampl[nblocks][maxwfpulses]
-    WfTimeArr wftime;  // means Double_t wftime[nblocks][maxwfpulses]
-
-    // Initialize every slot to -100 (the “empty” sentinel you used with RVec before)
-    for (int ib = 0; ib < nblocks; ++ib) {
-      for (int ip = 0; ip < maxwfpulses; ++ip) {
-        wfampl[ib][ip] = -100.0;
-        wftime[ib][ip] = -100.0;
-      }
-    }
-*/
 
 
     // not used but here they are anyway
@@ -512,13 +457,6 @@ ROOT::RVec<Double_t> wftime(nblocks * maxwfpulses, -100.0);
       wfnpulse[bn] = 0;
       Int_t good = 0;
 
-      /*
-      for (Int_t p = 0; p < maxwfpulses; p++)
-      {
-        // cout << "Setting parameters for pulse " << p << " with index " << 2+2*p << " and " << 3+2*p << endl;
-        wfampl[bn][p] = -1;
-      }
-      */
 
       if (!finter[bn])
       {
@@ -603,42 +541,7 @@ ROOT::RVec<Double_t> wftime(nblocks * maxwfpulses, -100.0);
         finter[bn]->FixParameter(3 + 2 * p, 0.);
       }
 
-      // Floor any zero‐error bins so χ² is finite
- /*
-       int nBins = hsig_i[bn]->GetNbinsX();
-        for (int ib = 1; ib <= nBins; ++ib) {
-           if (hsig_i[bn]->GetBinError(ib) == 0)
-           hsig_i[bn]->SetBinError(ib, 1.0);
-        }
-*/
-/*
-        // pedestal guess
-       double ped = 0;
-         for (int ib=1; ib<=std::min(5,nBins); ++ib)
-          ped += hsig_i[bn]->GetBinContent(ib);
-        ped /=  std::min(5,nBins);
-        finter[bn]->SetParameter(1, ped);
-*/
 
-        // for each real pulse p:
-/*        
-        for (int p = 0; p < wfnpulse[bn]; ++p) {
-          int maxb = hsig_i[bn]->GetMaximumBin();
-          double t0  = hsig_i[bn]->GetBinCenter(maxb);
-          double a0  = hsig_i[bn]->GetBinContent(maxb);
-          finter[bn]->SetParameter(2+2*p, t0);
-          finter[bn]->SetParLimits(2+2*p, t0-5, t0+5);
-          finter[bn]->SetParameter(3+2*p, a0);
-          finter[bn]->SetParLimits(3+2*p, a0*0.1, a0*2.0);
-        }
-*/
-/*
-        int lastToFloat = 1 + 2*wfnpulse[bn];
-       for (int ip = lastToFloat + 1; ip < nbparameters; ++ip) {
-        double val = finter[bn]->GetParameter(ip);
-        finter[bn]->FixParameter(ip, val);
-      }
-*/
       if (wfnpulse[bn] > 0 && good == 1)
       {
         for (Int_t p = 0; p < TMath::Min(maxwfpulses, wfnpulse[bn]); p++)
@@ -737,20 +640,7 @@ ROOT::RVec<Double_t> wftime(nblocks * maxwfpulses, -100.0);
         finter[bn]->FixParameter(2 + 2*p, 0.);
         finter[bn]->FixParameter(3 + 2*p, 0.);
       }
-/*
-      for (int p = wfnpulse[bn]; p < wfnpulse[bn]+2; ++p) {
-        std::cout<<"  [DEBUG] fixed slot p="<<p
-                 <<": time="<<finter[bn]->GetParameter(2+2*p)
-                 <<", ampl="<<finter[bn]->GetParameter(3+2*p)
-                 <<std::endl;
-      }
-  */    
 
-      // hsig_i[bn]->Fit(Form("finter_%d",bn),"Q","",TMath::Max(0.,wftime[bn][0]-20),ntime);
-      // File << "Checkpoint: Before fitting function for bn = " << bn << endl;
-
-      //hsig_i[bn]->Fit(Form("finter_%d", bn), "Q", "", 0., ntime);
-       
 //Prepare binned data from the histogram:
 int nBins = hsig_i[bn]->GetNbinsX();
 ROOT::Fit::BinData data(nBins, 1);
@@ -799,17 +689,6 @@ cfg.ParSettings(ip).Release();
   }
 
 cfg.ParSettings(0).Fix();  
-/*
-// lock the fake pulse amplitudes to never go below 0.05:
-if(good ==0){
-cfg.ParSettings(3 + 2*(wfnpulse[bn]-1)).SetLowerLimit(0.05);
-cfg.ParSettings(3 + 2*(wfnpulse[bn]-1)).SetUpperLimit(10);
-cfg.ParSettings(2 + 2*(wfnpulse[bn]-1)).SetLowerLimit(-4);
-cfg.ParSettings(2 + 2*(wfnpulse[bn]-1)).SetUpperLimit(4);
-}
-*/
-//cfg.ParSettings(3 + 2*(wfnpulse[bn]-1)).Fix();
-//cfg.ParSettings(2 + 2*(wfnpulse[bn]-1)).Fix();
 
 
 
@@ -837,25 +716,6 @@ if(good == 0 && wfnpulse[bn]>1 && ok){
   }
 
 
-
-/*
-for(int p=0; p<26;p++){
-  //std::cout<<p<<" : "<<finter[bn]->GetParameter(p)<<endl;
-  std::cout<<p<<" : "<<finter[bn]->GetParameter(2 + 2*p)<<endl;
-  std::cout<<p<<" : "<<finter[bn]->GetParameter(3 + 2*p)<<endl;
-}
-
-*/
-
-if (!ok) {
-  //std::cerr<<"Fit failed for event "<<evt<<", block "<<bn<<"\n";
-  for(int p=0; p<26;p++){
-    //std::cout<<p<<" : "<<finter[bn]->GetParameter(p)<<endl;
-  //  std::cout<<p<<" : "<<finter[bn]->GetParameter(2 + 2*p)<<endl;
-  //  std::cout<<p<<" : "<<finter[bn]->GetParameter(3 + 2*p)<<endl;
-  }
-  //return;
-}
 if (!ok) {
   // retry just this one with a tougher configuration
  // cout<<"FAILED Again, retry"<<endl;
@@ -875,28 +735,12 @@ if (!ok) {
   wfampl[bn * maxwfpulses + p ] = -1000;
   }
   
-  for(int p=0; p<26;p++){
-    //std::cout<<p<<" : "<<finter[bn]->GetParameter(p)<<endl;
-   // std::cout<<p<<" : "<<finter[bn]->GetParameter(2 + 2*p)<<endl;
-   // std::cout<<p<<" : "<<finter[bn]->GetParameter(3 + 2*p)<<endl;
-   // std::cout<<wfampl[bn][p]<<"  "<<wftime[bn][p]<<endl;
-  }
-  
+
   return;
 }
 
 //Extract parameters to arrays
 auto &result = fitter.Result();
-
-/*
-// Extract the fit parameters directly into your arrays: (replaces line 770/772)
-    for (Int_t p = 0; p < wfnpulse[bn]; ++p) {
-      wftime[bn][p] = result.Parameter(2 + 2*p) * dt
-                       + corr_time_HMS - cortime[bn]
-                       - timerefacc * dt;
-      wfampl[bn][p] = result.Parameter(3 + 2*p);
-  }
-      */
 
       for (Int_t p = 0; p < wfnpulse[bn]; ++p) {
         // 1) the fitted bin shift (same units your x[] was in)
@@ -918,19 +762,7 @@ auto &result = fitter.Result();
                    + corr_time_HMS                // add HMS correction
                    - cortime[bn]                  // subtract block‐by‐block cable delay
                    - timerefacc*dt;               // subtract your reference‐time offset
-    
-    /*
-        std::cout
-          << "AFTER FIT: bloc " << bn
-          << "  pulse="   << p
-          << "  binOff="  << binOff
-          << "  binIdx="  << binIndex
-          << "  time_unc="<< uncorTime  << " ns"
-          << "  time_cor="<< corrTime   << " ns"
-          << "  ampl="    << wfampl[bn][p]       << " mV"
-           << " wftime="    << wftime[bn][p]       << " mV"
-          << std::endl;
-          */
+
     }
   unsigned npar = result.NPar();
   for(unsigned ip=0; ip<npar; ++ip) {
@@ -976,22 +808,6 @@ chi2[bn] = tempchi2/ndf;
         Sampener[i] = -100;
         Npulse[i] = 0;
 
-        //finter[i] = new TF1(Form("finter_%d", i), func, -200, ntime + 200, nbparameters);
-	//auto uniqName = Form("finter_evt%lld_blk%d_thr%p", evt, bn, (void*)std::this_thread::get_id());
-	//finter[bn] = std::make_unique<TF1>(uniqName, func, -200, ntime + 200, nbparameters);
-
-	//finter[i] = std::make_unique<TF1>(Form("finter_%d", i),func, -200, ntime + 200,nbparameters); //now a thread-local object
-        
-	//finter[i]->FixParameter(0, i); // numero de bloc
-     //   finter[i]->SetLineColor(4);
-      //  finter[i]->SetNpx(1100);
-/*
-        for (Int_t p = 0; p < maxwfpulses; p++)
-        {
-          wftime[i][p] = -100;
-          wfampl[i][p] = -100;
-        }
-*/
 
       // avoid threads creating hsig with same name at same time(before object deletion)
         int tid = TThread::GetId();                          // or std::this_thread::get_id()
@@ -1004,12 +820,7 @@ chi2[bn] = tempchi2/ndf;
         hsig_i[i]->GetYaxis()->SetTitle("(mV)");
         hsig_i[i]->GetYaxis()->SetLabelSize(0.05);
 
-        /*
-        for (Int_t j = 0; j < ntime; j++)
-        {
-          signal[i][j] = 0;
-        }
-          */
+
 
       } // liste de presence des blocs! pres=0 si bloc absent, pres=1 s'il est present
       std::fill(signal.begin(), signal.end(), 0.);
@@ -1405,43 +1216,6 @@ if((int)evt % 1000 == 0){
    // std::cout << col << std::endl;
 }
 
-//OLD WRITE OUT METHOD WORKS BUT SLOW
-////////////
-/*
-
-
-  TFile fin(filename, "READ");
-  TFile fout(outFile, "RECREATE");
-    // copy every key except the big tree “T”
-    TIter nextKey(fin.GetListOfKeys());
-    while (TKey* key = (TKey*)nextKey()) {
-      if (std::string(key->GetName()) == "T") continue;
-      TObject* obj = key->ReadObj();
-      fout.cd();
-      obj->Write(key->GetName());
-      delete obj;
-    }
-
-    // --- 3) Clone a slimmed‐down “T” (disable the huge waveform branch) ---
-    TTree* big = (TTree*)fin.Get("T");
-    big->SetBranchStatus("*", 1);
-    big->SetBranchStatus("NPS.cal.fly.adcSampWaveform",     0);
-    big->SetBranchStatus("Ndata.NPS.cal.fly.adcSampWaveform",0);
-    TTree* slim = big->CloneTree(-1, "fast");
-
-    fout.cd();
-    slim->Write("T");        // write your one-and-only slim T back
-    fout.Close();
-    fin.Close();
-
-
-// prepare the options
-ROOT::RDF::RSnapshotOptions opts;
-opts.fMode = "UPDATE";  
-df_final.Snapshot("WF", outFile, {"chi2","ampl","amplwf","wfnpulse","Sampampl","Samptime","timewf","enertot","integtot","pres","corr_time_HMS","h1time","h2time","evt","wfampl","wftime"},opts);
-
-*/
-
 ///////////
 cout<<"About to Snapshot"<<endl;
 TString tempout = Form("../nps_production_%d_%d_%d_temp.root", run, seg,nthreads);
@@ -1489,14 +1263,6 @@ tout->SetBasketSize("wfampl", 512*1024);
 tout->SetBasketSize("wftime", 512*1024);
   tout->BuildIndex("evt");
 
-/*
-  Long64_t nent = tin->GetEntries();
-for (Long64_t i = 0; i < nent; ++i) {
-  Long64_t entry = tin->GetEntryNumber(i);     // i-th smallest evt
-  tin->GetEntry(entry);
-  tout->Fill();
-}
-*/
 
 std::cout
   <<"=== Sorting done. Elapsed real time: "<<t.RealTime()
@@ -1509,65 +1275,7 @@ t.Continue();
   fout->Close();
   fin->Close();
 
- // MERGER METHOD STILL CORUUPOT BASKETS
- /*
-TFileMerger merger;
-merger.OutputFile(outFile); 
-merger.AddFile(outFile);   // your big file
-merger.AddFile(tempout);   // the standalone WF file
-if (!merger.Merge()) {
-  std::cerr << "ERROR: TFileMerger failed to merge WF into " << outFile << "\n";
-  return;
-}
-  */
-/*
-
-// 1) Open the file you already built at the top:
-TFile *fout = TFile::Open(outFile, "UPDATE");
-if (!fout || fout->IsZombie()) {
-  std::cerr<<"ERROR: could not open "<<outFile<<" for UPDATE\n";
-  return;
-}
-
-// 2) Open the WF-only file you just wrote:
-TFile *fwf = TFile::Open(tempout, "READ");
-if (!fwf || fwf->IsZombie()) {
-  std::cerr<<"ERROR: could not open "<<tempout<<"\n";
-  fout->Close();
-  return;
-}
-
-// 3) Copy just the WF tree key(s):
-TKey *key = static_cast<TKey*>(
-    fwf->GetListOfKeys()->FindObject("WF")
-);
-if (!key) {
-  std::cerr<<"ERROR: WF not found in "<<tempout<<"\n";
-} else {
-  TObject *obj = key->ReadObj();   // a TTree*
-  fout->cd();                       // switch to the big file
-  obj->Write("WF");                 // write it in-place
-}
-
-// 4) Clean up
-fwf->Close();
-fout->Close();
-*/
-   // h_h1time->Write();  // Write histogram to the output file
-   // h_h2time->Write();  // Write histogram to the output file
-
-  // Then safely write and delete at the end
-  /*
-    fout->cd();
-    h1time->Write("h1time");
-    h2time->Write("h2time");
-    delete h1time;
-    delete h2time;
-    fout->Write();
-    fout->Close();
-  */
-  // TTree was never written to output file???
-
+ 
   cout << "fin de l'analyse" << endl;
   //cout << "Failed fits: "<<failcount<<endl;
   std::cout << "Total failed fits: " << nFitFailures.load() << "\n";
