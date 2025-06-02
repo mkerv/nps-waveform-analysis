@@ -65,6 +65,9 @@ Double_t timerefacc = 0;   // en (-4ns) car le pic de timewf pousse vers -22ns
 std::vector<std::vector<double>> interpX(nblocks),
                                 interpY(nblocks);
 
+//using WfAmplArr = std::array<std::array<Double_t, maxwfpulses>, nblocks>;
+//using WfTimeArr = std::array<std::array<Double_t, maxwfpulses>, nblocks>;
+
 ///////////////////////////////////////////////////////////// FIT FUNCTION USED AND SCHEMATICS /////////////////////////////////////////////////////////////
 bool FastCloneAndFilter(const TString &inName,
   const TString &outName) {
@@ -104,7 +107,7 @@ void TEST_2(int run, int seg, int threads)
 
   // BUILD TCHAIN
   TChain chain("T");
-  TString filename = Form("/cache/hallc/c-nps/analysis/pass2/replays/production/nps_hms_coin_%d_%d_1_-1.root", run, seg);
+  TString filename = Form("/cache/hallc/c-nps/analysis/pass2/replays/updated/nps_hms_coin_%d_%d_1_-1.root", run, seg);
   //TString filename = Form("/mss/hallc/c-nps/analysis/online/replays/nps_hms_coin_%d_%d_1_-1.root", run, seg);
   //TString filename = Form("../nps_hms_coin_%d_%d_1_-1.root", run, seg);
   TFile *testOpen = TFile::Open(filename);
@@ -126,7 +129,7 @@ t.Continue();
 
 
   // ENABLE MT
- // ROOT::EnableImplicitMT(nthreads);
+  ROOT::EnableImplicitMT(nthreads);
   std::cout << "Implicit MT enabled: " << ROOT::IsImplicitMTEnabled() << "\n";
   std::cout << "Number of threads: " << ROOT::GetThreadPoolSize() << "\n";
 
@@ -168,7 +171,7 @@ chain.SetBranchStatus("NPS.cal.fly.adcSampPulseTimeRaw",1);
   // Define a new RDataFrame that processes only 1% of the events
   auto nEventsToProcess = nEntriesDF / 1000;
   //auto df1percent = df.Range(0, nEventsToProcess);
-  auto df1percent = df.Range(9999, 12000);
+  //auto df1percent = df.Range(9999, 12000);
 
   Double_t dt = 4.;                                    // time bin (sample) width (4 ns), the total time window is then ntime*dt
   const int nslots = 1104;                             // nb maximal de slots dans tous les fADC
@@ -276,8 +279,8 @@ chain.SetBranchStatus("NPS.cal.fly.adcSampPulseTimeRaw",1);
      filetime.close();
 
   // Load only required branches into dataframe
- // auto df2 = df.Define("NSampWaveForm", "Ndata.NPS.cal.fly.adcSampWaveform")
-    auto df2 = df1percent.Define("NSampWaveForm", "Ndata.NPS.cal.fly.adcSampWaveform")
+  auto df2 = df.Define("NSampWaveForm", "Ndata.NPS.cal.fly.adcSampWaveform")
+  //  auto df2 = df1percent.Define("NSampWaveForm", "Ndata.NPS.cal.fly.adcSampWaveform")
                  .Define("SampWaveForm", "NPS.cal.fly.adcSampWaveform")
                  .Define("NadcCounter", "Ndata.NPS.cal.fly.adcCounter")
                  .Define("adcCounter", "NPS.cal.fly.adcCounter")
@@ -424,10 +427,32 @@ timerefacc = (calodist - 9.5) / (3.e8 * 1.e-9 * 4);
     std::vector<Int_t> wfnpulse(nblocks, -100);
     //Double_t wfampl[nblocks][maxwfpulses];
     //Double_t wftime[nblocks][maxwfpulses];
-std::vector<std::vector<Double_t>> wfampl(nblocks,
-  std::vector<Double_t>(maxwfpulses, -100));
-std::vector<std::vector<Double_t>> wftime(nblocks,
-  std::vector<Double_t>(maxwfpulses, -100));
+
+//std::vector<std::vector<Double_t>> wfampl(nblocks,
+ // std::vector<Double_t>(maxwfpulses, -100));
+//std::vector<std::vector<Double_t>> wftime(nblocks,
+ // std::vector<Double_t>(maxwfpulses, -100));
+
+// Build a small RVec<Double_t> of length=maxwfpulses, all = -100
+//ROOT::RVec<Double_t> tmp(maxwfpulses, -100);
+
+// Now create an outer RVec that contains nblocks copies of tmp:
+ROOT::RVec<Double_t> wfampl(nblocks * maxwfpulses, -100.0);
+ROOT::RVec<Double_t> wftime(nblocks * maxwfpulses, -100.0);
+/*
+    // Wrap them immediately in std::array so we can return them later
+    WfAmplArr wfampl;  // means Double_t wfampl[nblocks][maxwfpulses]
+    WfTimeArr wftime;  // means Double_t wftime[nblocks][maxwfpulses]
+
+    // Initialize every slot to -100 (the “empty” sentinel you used with RVec before)
+    for (int ib = 0; ib < nblocks; ++ib) {
+      for (int ip = 0; ip < maxwfpulses; ++ip) {
+        wfampl[ib][ip] = -100.0;
+        wftime[ib][ip] = -100.0;
+      }
+    }
+*/
+
 
     // not used but here they are anyway
     Double_t ampl2[nblocks];
@@ -526,16 +551,16 @@ std::vector<std::vector<Double_t>> wftime(nblocks,
             if (wfnpulse[bn] >= maxwfpulses)
             {
               cout << "Warning: wfnpulse[" << bn << "] exceeded maxwfpulses!" << endl;
-              //  wfnpulse[bn] = maxwfpulses - 1; // Prevent overflow
+                wfnpulse[bn] = maxwfpulses - 1; // Prevent overflow
             }
 
-            wfampl[bn][wfnpulse[bn]] = hsig_i[bn]->GetBinContent(it + 4); // get the amplitude of the pulse found
+            wfampl[bn * maxwfpulses + wfnpulse[bn]] = hsig_i[bn]->GetBinContent(it + 4); // get the amplitude of the pulse found
 
-            wftime[bn][wfnpulse[bn]] = hsig_i[bn]->GetBinCenter(it + 4); // get the time of the pulse found
+            wftime[bn * maxwfpulses + wfnpulse[bn]] = hsig_i[bn]->GetBinCenter(it + 4); // get the time of the pulse found
 
             // flag for the good pulse
            //if (TMath::Abs(wftime[bn][wfnpulse[bn]] - timeref[bn] +(corr_time_HMS - cortime[bn]) / dt - timerefacc) < 4.)
-            if (TMath::Abs(wftime[bn][wfnpulse[bn]] - timeref[bn]) < 4.)
+            if (TMath::Abs(wftime[bn * maxwfpulses + wfnpulse[bn]] - timeref[bn]) < 4.)
             {
               good = 1;
              //cpulse = wfnpulse[bn];
@@ -623,15 +648,15 @@ std::vector<std::vector<Double_t>> wftime(nblocks,
 
     //finter[bn]->SetParameter(2 + 2 * p, wftime[bn][p] - timeref[bn]);
           //finter[bn]->SetParameter(2 + 2 * p, wftime[bn][p] - timeref[bn] + (corr_time_HMS - cortime[bn]) / dt);   
-          finter[bn]->SetParameter(2 + 2 * p, wftime[bn][p]- timeref[bn]);   
-          finter[bn]->SetParameter(3 + 2 * p, wfampl[bn][p]);
+          finter[bn]->SetParameter(2 + 2 * p, wftime[bn * maxwfpulses + p ]- timeref[bn]);   
+          finter[bn]->SetParameter(3 + 2 * p, wfampl[bn * maxwfpulses + p ]);
 
 
           //finter[bn]->SetParLimits(2 + 2 * p, wftime[bn][p] - timeref[bn] - 3, wftime[bn][p] - timeref[bn] + 3);
           //finter[bn]->SetParLimits(2 + 2 * p, wftime[bn][p] - timeref[bn] + (corr_time_HMS - cortime[bn]) / dt - 3, wftime[bn][p] - timeref[bn] + (corr_time_HMS - cortime[bn]) / dt + 3);
-          finter[bn]->SetParLimits(2 + 2 * p, wftime[bn][p]- timeref[bn] - 3, wftime[bn][p]- timeref[bn] + 3);
+          finter[bn]->SetParLimits(2 + 2 * p, wftime[bn * maxwfpulses + p ]- timeref[bn] - 3, wftime[bn * maxwfpulses + p ]- timeref[bn] + 3);
 
-          finter[bn]->SetParLimits(3 + 2 * p, wfampl[bn][p] * 0.2, wfampl[bn][p] * 3);   
+          finter[bn]->SetParLimits(3 + 2 * p, wfampl[bn * maxwfpulses + p ] * 0.2, wfampl[bn * maxwfpulses + p ] * 3);   
 
         }
       }
@@ -642,13 +667,13 @@ std::vector<std::vector<Double_t>> wftime(nblocks,
         {
           finter[bn]->ReleaseParameter(2 + 2 * p);
           finter[bn]->ReleaseParameter(3 + 2 * p);
-          finter[bn]->SetParameter(2 + 2 * p, wftime[bn][p] - timeref[bn]);
+          finter[bn]->SetParameter(2 + 2 * p, wftime[bn * maxwfpulses + p ] - timeref[bn]);
          // finter[bn]->SetParameter(2 + 2 * p, wftime[bn][p] - timeref[bn] + (corr_time_HMS - cortime[bn]) / dt);
-          finter[bn]->SetParameter(3 + 2 * p, wfampl[bn][p]);
-          finter[bn]->SetParLimits(2 + 2 * p, wftime[bn][p] - timeref[bn] - 3, wftime[bn][p] - timeref[bn] + 3);
+          finter[bn]->SetParameter(3 + 2 * p, wfampl[bn * maxwfpulses + p ]);
+          finter[bn]->SetParLimits(2 + 2 * p, wftime[bn * maxwfpulses + p ] - timeref[bn] - 3, wftime[bn * maxwfpulses + p ] - timeref[bn] + 3);
           //finter[bn]->SetParLimits(2 + 2 * p, wftime[bn][p] - timeref[bn] + (corr_time_HMS - cortime[bn]) / dt - 3, wftime[bn][p] - timeref[bn] + (corr_time_HMS - cortime[bn]) / dt + 3);
 
-          finter[bn]->SetParLimits(3 + 2 * p, wfampl[bn][p] * 0.2, wfampl[bn][p] * 3);
+          finter[bn]->SetParLimits(3 + 2 * p, wfampl[bn * maxwfpulses + p ] * 0.2, wfampl[bn * maxwfpulses + p ] * 3);
         }
 
         // On recherche quand meme un eventuel pulse en temps
@@ -800,8 +825,8 @@ if(good == 0 && wfnpulse[bn]>1 && ok){
   chi2[bn] = tempresult.Chi2()/tempresult.Ndf();
       
   for (Int_t p = 0; p < wfnpulse[bn]; ++p) {
-    wfampl[bn][p] = tempresult.Parameter(3 + 2*p);
-    wftime[bn][p]  = tempresult.Parameter(2 + 2*p)*dt                     // convert bins → ns
+    wfampl[bn * maxwfpulses + p ] = tempresult.Parameter(3 + 2*p);
+    wftime[bn * maxwfpulses + p ]  = tempresult.Parameter(2 + 2*p)*dt                     // convert bins → ns
                + corr_time_HMS                // add HMS correction
                - cortime[bn]                  // subtract block‐by‐block cable delay
                - timerefacc*dt;               // subtract your reference‐time offset
@@ -846,8 +871,8 @@ if (!ok) {
  if(good == 0 && wfnpulse[bn]>1) return;
  for (int p = 0; p < wfnpulse[bn]; p++)
   {
-  wftime[bn][p] = -1000;
-  wfampl[bn][p] = -1000;
+  wftime[bn * maxwfpulses + p ] = -1000;
+  wfampl[bn * maxwfpulses + p ] = -1000;
   }
   
   for(int p=0; p<26;p++){
@@ -888,8 +913,8 @@ auto &result = fitter.Result();
         double corrTime = uncorTime + (corr_time_HMS - cortime[bn]);
     
         // 5) amplitude
-        wfampl[bn][p] = result.Parameter(3 + 2*p);
-        wftime[bn][p]  = binOff*dt                     // convert bins → ns
+        wfampl[bn * maxwfpulses + p ] = result.Parameter(3 + 2*p);
+        wftime[bn * maxwfpulses + p ]  = binOff*dt                     // convert bins → ns
                    + corr_time_HMS                // add HMS correction
                    - cortime[bn]                  // subtract block‐by‐block cable delay
                    - timerefacc*dt;               // subtract your reference‐time offset
@@ -967,7 +992,12 @@ chi2[bn] = tempchi2/ndf;
           wfampl[i][p] = -100;
         }
 */
-        hsig_i[i] = new TH1F(Form("hsig_i%d", i), Form("hsig_i%d", i), ntime, 0, ntime);
+
+      // avoid threads creating hsig with same name at same time(before object deletion)
+        int tid = TThread::GetId();                          // or std::this_thread::get_id()
+        TString hname = Form("hsig_i_evt%.0f_thr%d_blk%d", evt, tid, i);
+        hsig_i[i] = new TH1F(hname, hname, ntime, 0, ntime);
+        //hsig_i[i] = new TH1F(Form("hsig_i%d", i), Form("hsig_i%d", i), ntime, 0, ntime);
         hsig_i[i]->SetLineColor(1);
         hsig_i[i]->SetLineWidth(2);
         hsig_i[i]->GetXaxis()->SetTitle("Time (4 ns)");
@@ -1120,27 +1150,27 @@ chi2[bn] = tempchi2/ndf;
 
            // wfampl[i][p] = finter[i]->GetParameter(3 + 2 * p); // amplitude du pulse en ns
 
-            if (wfampl[i][p] > 20)
+            if (wfampl[i * maxwfpulses + p ] > 20)
             {
 
               /// fix later //// diagnostic histos
               
                // h2time->Fill(wftime[i][p], 1.);
                //h2time[i]=wftime[i][p];
-               h2time.push_back(wftime[i][p]);
+               h2time.push_back(wftime[i * maxwfpulses + p ]);
 
                // h1time->Fill(finter[i]->GetParameter(2 + 2 * p), 1.);
                // h1time[i]=finter[i]->GetParameter(2 + 2 * p);
 
                h1time.push_back(finter[i]->GetParameter(2 + 2 * p) - timerefacc + corr_time_HMS / dt);
-               //h1time.push_back(finter[i]->GetParameter(2 + 2 * p));
+               //h1time.push_back(finter[i]->GsetParameter(2 + 2 * p));
               
             } // Fill the time spectrums
 
             if (p == 0)
             {
-              timewf[i] = wftime[i][p];
-              amplwf[i] = wfampl[i][p];
+              timewf[i] = wftime[i * maxwfpulses + p ];
+              amplwf[i] = wfampl[i * maxwfpulses + p ];
             }
 
             // if(p>0){if(TMath::Abs(wftime[i][p]-timerefacc/dt)<TMath::Abs(timewf[i]-timerefacc/dt)){timewf[i]=wftime[i][p];amplwf[i]=wfampl[i][p];}}//pour prendre le pulse dont le temps est le plus proche de timerefacc
@@ -1149,10 +1179,10 @@ chi2[bn] = tempchi2/ndf;
 
             if (p > 0)
             {
-              if (TMath::Abs(wftime[i][p]) < TMath::Abs(timewf[i]))
+              if (TMath::Abs(wftime[i * maxwfpulses + p ]) < TMath::Abs(timewf[i]))
               {
-                timewf[i] = wftime[i][p];
-                amplwf[i] = wfampl[i][p];
+                timewf[i] = wftime[i * maxwfpulses + p ];
+                amplwf[i] = wfampl[i * maxwfpulses + p ];
               }
             } // pour prendre le pulse dont le temps est le plus proche de timerefacc
 
@@ -1317,50 +1347,50 @@ if((int)evt % 1000 == 0){
   auto df_final = df2.Define("tuple", analyze, {"NSampWaveForm", "SampWaveForm", "evt", "NadcCounter", "adcCounter", "adcSampPulseTime", "adcSampPulseTimeRaw", "adcSampPulseAmp", "adcSampPulseInt", "adcSampPulsePed"});
 
   // Using auto casued compile error for lambda arguements, had to list them explicitly to work?
-  df_final = df_final.Define("chi2", [](const std::tuple<std::vector<Double_t>,std::vector<Double_t>,std::vector<Double_t>,std::vector<Int_t>,std::vector<Double_t>,std::vector<Double_t>,std::vector<Double_t>,Double_t,Double_t,std::vector<Int_t>,Double_t,std::vector<Double_t>,std::vector<Double_t>,std::vector<std::vector<Double_t>>,std::vector<std::vector<Double_t>> > &tuple){ 
+  df_final = df_final.Define("chi2", [](const std::tuple<std::vector<Double_t>,std::vector<Double_t>,std::vector<Double_t>,std::vector<Int_t>,std::vector<Double_t>,std::vector<Double_t>,std::vector<Double_t>,Double_t,Double_t,std::vector<Int_t>,Double_t,std::vector<Double_t>,std::vector<Double_t>,ROOT::RVec<Double_t> , ROOT::RVec<Double_t>   > &tuple){ 
    std::vector<Double_t> output = std::get<0>(tuple);
    return output; },{"tuple"});
-  df_final = df_final.Define("ampl", [](const std::tuple<std::vector<Double_t>,std::vector<Double_t>,std::vector<Double_t>,std::vector<Int_t>,std::vector<Double_t>,std::vector<Double_t>,std::vector<Double_t>,Double_t,Double_t,std::vector<Int_t>,Double_t,std::vector<Double_t>,std::vector<Double_t>,std::vector<std::vector<Double_t>>,std::vector<std::vector<Double_t>> > &tuple){ 
+  df_final = df_final.Define("ampl", [](const std::tuple<std::vector<Double_t>,std::vector<Double_t>,std::vector<Double_t>,std::vector<Int_t>,std::vector<Double_t>,std::vector<Double_t>,std::vector<Double_t>,Double_t,Double_t,std::vector<Int_t>,Double_t,std::vector<Double_t>,std::vector<Double_t>,ROOT::RVec<Double_t> , ROOT::RVec<Double_t>   > &tuple){ 
     std::vector<Double_t> output = std::get<1>(tuple);
     return output; },{"tuple"});
-  df_final = df_final.Define("amplwf", [](const std::tuple<std::vector<Double_t>,std::vector<Double_t>,std::vector<Double_t>,std::vector<Int_t>,std::vector<Double_t>,std::vector<Double_t>,std::vector<Double_t>,Double_t,Double_t,std::vector<Int_t>,Double_t,std::vector<Double_t>,std::vector<Double_t>,std::vector<std::vector<Double_t>>,std::vector<std::vector<Double_t>> > &tuple){ 
+  df_final = df_final.Define("amplwf", [](const std::tuple<std::vector<Double_t>,std::vector<Double_t>,std::vector<Double_t>,std::vector<Int_t>,std::vector<Double_t>,std::vector<Double_t>,std::vector<Double_t>,Double_t,Double_t,std::vector<Int_t>,Double_t,std::vector<Double_t>,std::vector<Double_t>,ROOT::RVec<Double_t> , ROOT::RVec<Double_t>   > &tuple){ 
     std::vector<Double_t> output = std::get<2>(tuple);
     return output; },{"tuple"});
-    df_final = df_final.Define("wfnpulse", [](const std::tuple<std::vector<Double_t>,std::vector<Double_t>,std::vector<Double_t>,std::vector<Int_t>,std::vector<Double_t>,std::vector<Double_t>,std::vector<Double_t>,Double_t,Double_t,std::vector<Int_t>,Double_t,std::vector<Double_t>,std::vector<Double_t>,std::vector<std::vector<Double_t>>,std::vector<std::vector<Double_t>> > &tuple){ 
+    df_final = df_final.Define("wfnpulse", [](const std::tuple<std::vector<Double_t>,std::vector<Double_t>,std::vector<Double_t>,std::vector<Int_t>,std::vector<Double_t>,std::vector<Double_t>,std::vector<Double_t>,Double_t,Double_t,std::vector<Int_t>,Double_t,std::vector<Double_t>,std::vector<Double_t>,ROOT::RVec<Double_t> , ROOT::RVec<Double_t>   > &tuple){ 
       std::vector<Int_t> output = std::get<3>(tuple);
       return output; },{"tuple"});  
-      df_final = df_final.Define("Sampampl", [](const std::tuple<std::vector<Double_t>,std::vector<Double_t>,std::vector<Double_t>,std::vector<Int_t>,std::vector<Double_t>,std::vector<Double_t>,std::vector<Double_t>,Double_t,Double_t,std::vector<Int_t>,Double_t,std::vector<Double_t>,std::vector<Double_t>,std::vector<std::vector<Double_t>>,std::vector<std::vector<Double_t>> > &tuple){ 
+      df_final = df_final.Define("Sampampl", [](const std::tuple<std::vector<Double_t>,std::vector<Double_t>,std::vector<Double_t>,std::vector<Int_t>,std::vector<Double_t>,std::vector<Double_t>,std::vector<Double_t>,Double_t,Double_t,std::vector<Int_t>,Double_t,std::vector<Double_t>,std::vector<Double_t>,ROOT::RVec<Double_t> , ROOT::RVec<Double_t>   > &tuple){ 
         std::vector<Double_t> output = std::get<4>(tuple);
         return output; },{"tuple"});
-        df_final = df_final.Define("Samptime", [](const std::tuple<std::vector<Double_t>,std::vector<Double_t>,std::vector<Double_t>,std::vector<Int_t>,std::vector<Double_t>,std::vector<Double_t>,std::vector<Double_t>,Double_t,Double_t,std::vector<Int_t>,Double_t,std::vector<Double_t>,std::vector<Double_t>,std::vector<std::vector<Double_t>>,std::vector<std::vector<Double_t>> > &tuple){ 
+        df_final = df_final.Define("Samptime", [](const std::tuple<std::vector<Double_t>,std::vector<Double_t>,std::vector<Double_t>,std::vector<Int_t>,std::vector<Double_t>,std::vector<Double_t>,std::vector<Double_t>,Double_t,Double_t,std::vector<Int_t>,Double_t,std::vector<Double_t>,std::vector<Double_t>,ROOT::RVec<Double_t> , ROOT::RVec<Double_t>   > &tuple){ 
           std::vector<Double_t> output = std::get<5>(tuple);
           return output; },{"tuple"});  
-          df_final = df_final.Define("timewf", [](const std::tuple<std::vector<Double_t>,std::vector<Double_t>,std::vector<Double_t>,std::vector<Int_t>,std::vector<Double_t>,std::vector<Double_t>,std::vector<Double_t>,Double_t,Double_t,std::vector<Int_t>,Double_t,std::vector<Double_t>,std::vector<Double_t>,std::vector<std::vector<Double_t>>,std::vector<std::vector<Double_t>> > &tuple){ 
+          df_final = df_final.Define("timewf", [](const std::tuple<std::vector<Double_t>,std::vector<Double_t>,std::vector<Double_t>,std::vector<Int_t>,std::vector<Double_t>,std::vector<Double_t>,std::vector<Double_t>,Double_t,Double_t,std::vector<Int_t>,Double_t,std::vector<Double_t>,std::vector<Double_t>,ROOT::RVec<Double_t> , ROOT::RVec<Double_t>   > &tuple){ 
             std::vector<Double_t> output = std::get<6>(tuple);
             return output; },{"tuple"});  
-            df_final = df_final.Define("enertot", [](const std::tuple<std::vector<Double_t>,std::vector<Double_t>,std::vector<Double_t>,std::vector<Int_t>,std::vector<Double_t>,std::vector<Double_t>,std::vector<Double_t>,Double_t,Double_t,std::vector<Int_t>,Double_t,std::vector<Double_t>,std::vector<Double_t>,std::vector<std::vector<Double_t>>,std::vector<std::vector<Double_t>> > &tuple){ 
+            df_final = df_final.Define("enertot", [](const std::tuple<std::vector<Double_t>,std::vector<Double_t>,std::vector<Double_t>,std::vector<Int_t>,std::vector<Double_t>,std::vector<Double_t>,std::vector<Double_t>,Double_t,Double_t,std::vector<Int_t>,Double_t,std::vector<Double_t>,std::vector<Double_t>,ROOT::RVec<Double_t> , ROOT::RVec<Double_t>   > &tuple){ 
               Double_t output = std::get<7>(tuple);
               return output; },{"tuple"});  
-              df_final = df_final.Define("integtot", [](const std::tuple<std::vector<Double_t>,std::vector<Double_t>,std::vector<Double_t>,std::vector<Int_t>,std::vector<Double_t>,std::vector<Double_t>,std::vector<Double_t>,Double_t,Double_t,std::vector<Int_t>,Double_t,std::vector<Double_t>,std::vector<Double_t>,std::vector<std::vector<Double_t>>,std::vector<std::vector<Double_t>> > &tuple){ 
+              df_final = df_final.Define("integtot", [](const std::tuple<std::vector<Double_t>,std::vector<Double_t>,std::vector<Double_t>,std::vector<Int_t>,std::vector<Double_t>,std::vector<Double_t>,std::vector<Double_t>,Double_t,Double_t,std::vector<Int_t>,Double_t,std::vector<Double_t>,std::vector<Double_t>,ROOT::RVec<Double_t> , ROOT::RVec<Double_t>   > &tuple){ 
                 Double_t output = std::get<8>(tuple);
                 return output; },{"tuple"});  
-                df_final = df_final.Define("pres", [](const std::tuple<std::vector<Double_t>,std::vector<Double_t>,std::vector<Double_t>,std::vector<Int_t>,std::vector<Double_t>,std::vector<Double_t>,std::vector<Double_t>,Double_t,Double_t,std::vector<Int_t>,Double_t,std::vector<Double_t>,std::vector<Double_t>,std::vector<std::vector<Double_t>>,std::vector<std::vector<Double_t>> > &tuple){ 
+                df_final = df_final.Define("pres", [](const std::tuple<std::vector<Double_t>,std::vector<Double_t>,std::vector<Double_t>,std::vector<Int_t>,std::vector<Double_t>,std::vector<Double_t>,std::vector<Double_t>,Double_t,Double_t,std::vector<Int_t>,Double_t,std::vector<Double_t>,std::vector<Double_t>,ROOT::RVec<Double_t> , ROOT::RVec<Double_t>   > &tuple){ 
                   std::vector<Int_t> output = std::get<9>(tuple);
                   return output; },{"tuple"});  
-                  df_final = df_final.Define("corr_time_HMS", [](const std::tuple<std::vector<Double_t>,std::vector<Double_t>,std::vector<Double_t>,std::vector<Int_t>,std::vector<Double_t>,std::vector<Double_t>,std::vector<Double_t>,Double_t,Double_t,std::vector<Int_t>,Double_t,std::vector<Double_t>,std::vector<Double_t>,std::vector<std::vector<Double_t>>,std::vector<std::vector<Double_t>> > &tuple){ 
+                  df_final = df_final.Define("corr_time_HMS", [](const std::tuple<std::vector<Double_t>,std::vector<Double_t>,std::vector<Double_t>,std::vector<Int_t>,std::vector<Double_t>,std::vector<Double_t>,std::vector<Double_t>,Double_t,Double_t,std::vector<Int_t>,Double_t,std::vector<Double_t>,std::vector<Double_t>,ROOT::RVec<Double_t> , ROOT::RVec<Double_t>   > &tuple){ 
                     Double_t output = std::get<10>(tuple);
                     return output; },{"tuple"});
-                    df_final = df_final.Define("h1time", [](const std::tuple<std::vector<Double_t>,std::vector<Double_t>,std::vector<Double_t>,std::vector<Int_t>,std::vector<Double_t>,std::vector<Double_t>,std::vector<Double_t>,Double_t,Double_t,std::vector<Int_t>,Double_t,std::vector<Double_t>,std::vector<Double_t>,std::vector<std::vector<Double_t>>,std::vector<std::vector<Double_t>> > &tuple){ 
+                    df_final = df_final.Define("h1time", [](const std::tuple<std::vector<Double_t>,std::vector<Double_t>,std::vector<Double_t>,std::vector<Int_t>,std::vector<Double_t>,std::vector<Double_t>,std::vector<Double_t>,Double_t,Double_t,std::vector<Int_t>,Double_t,std::vector<Double_t>,std::vector<Double_t>,ROOT::RVec<Double_t> , ROOT::RVec<Double_t>   > &tuple){ 
                       std::vector<Double_t> output = std::get<11>(tuple);
                       return output; },{"tuple"}); 
-                      df_final = df_final.Define("h2time", [](const std::tuple<std::vector<Double_t>,std::vector<Double_t>,std::vector<Double_t>,std::vector<Int_t>,std::vector<Double_t>,std::vector<Double_t>,std::vector<Double_t>,Double_t,Double_t,std::vector<Int_t>,Double_t,std::vector<Double_t>,std::vector<Double_t>,std::vector<std::vector<Double_t>>,std::vector<std::vector<Double_t>> > &tuple){ 
+                      df_final = df_final.Define("h2time", [](const std::tuple<std::vector<Double_t>,std::vector<Double_t>,std::vector<Double_t>,std::vector<Int_t>,std::vector<Double_t>,std::vector<Double_t>,std::vector<Double_t>,Double_t,Double_t,std::vector<Int_t>,Double_t,std::vector<Double_t>,std::vector<Double_t>,ROOT::RVec<Double_t> , ROOT::RVec<Double_t>   > &tuple){ 
                         std::vector<Double_t> output = std::get<12>(tuple);
                         return output; },{"tuple"}); 
-                        df_final = df_final.Define("wfampl", [](const std::tuple<std::vector<Double_t>,std::vector<Double_t>,std::vector<Double_t>,std::vector<Int_t>,std::vector<Double_t>,std::vector<Double_t>,std::vector<Double_t>,Double_t,Double_t,std::vector<Int_t>,Double_t,std::vector<Double_t>,std::vector<Double_t>,std::vector<std::vector<Double_t>>,std::vector<std::vector<Double_t>> > &tuple){ 
-                          std::vector<std::vector<Double_t>> output = std::get<13>(tuple);
+                        df_final = df_final.Define("wfampl", [](const std::tuple<std::vector<Double_t>,std::vector<Double_t>,std::vector<Double_t>,std::vector<Int_t>,std::vector<Double_t>,std::vector<Double_t>,std::vector<Double_t>,Double_t,Double_t,std::vector<Int_t>,Double_t,std::vector<Double_t>,std::vector<Double_t>,ROOT::RVec<Double_t> , ROOT::RVec<Double_t>   > &tuple){ 
+                          ROOT::RVec<Double_t> output = std::get<13>(tuple);
                           return output; },{"tuple"});  
-                          df_final = df_final.Define("wftime", [](const std::tuple<std::vector<Double_t>,std::vector<Double_t>,std::vector<Double_t>,std::vector<Int_t>,std::vector<Double_t>,std::vector<Double_t>,std::vector<Double_t>,Double_t,Double_t,std::vector<Int_t>,Double_t,std::vector<Double_t>,std::vector<Double_t>,std::vector<std::vector<Double_t>>,std::vector<std::vector<Double_t>> > &tuple){ 
-                            std::vector<std::vector<Double_t>> output = std::get<14>(tuple);
+                          df_final = df_final.Define("wftime", [](const std::tuple<std::vector<Double_t>,std::vector<Double_t>,std::vector<Double_t>,std::vector<Int_t>,std::vector<Double_t>,std::vector<Double_t>,std::vector<Double_t>,Double_t,Double_t,std::vector<Int_t>,Double_t,std::vector<Double_t>,std::vector<Double_t>,ROOT::RVec<Double_t> , ROOT::RVec<Double_t>    > &tuple){ 
+                            ROOT::RVec<Double_t> output = std::get<14>(tuple);
                             return output; },{"tuple"});    
                                                   
                     
