@@ -53,6 +53,7 @@ const int nsignals = nblocks * maxpulses;
 const int maxwfpulses = 12; // nb maximal de pulses que la wfa peut trouver
 const int ntemp = 56;       // nb of temp sensors
 int failcount=0;
+std::atomic<int> nFitFailures{0};
 
 Double_t timeref[nblocks];
 Float_t cortime[nblocks];
@@ -527,7 +528,8 @@ if (!hsig_i[bn])
             wftime[bn][wfnpulse[bn]] = hsig_i[bn]->GetBinCenter(it + 4); // get the time of the pulse found
 
             // flag for the good pulse
-            if (TMath::Abs(wftime[bn][wfnpulse[bn]] - timeref[bn] +(corr_time_HMS - cortime[bn]) / dt - timerefacc) < 4.)
+            //if (TMath::Abs(wftime[bn][wfnpulse[bn]] - timeref[bn] +(corr_time_HMS - cortime[bn]) / dt - timerefacc) < 4.)
+            if (TMath::Abs(wftime[bn][wfnpulse[bn]] - timeref[bn]) < 4.)
             {
               good = 1;
              //cpulse = wfnpulse[bn];
@@ -702,8 +704,8 @@ ROOT::Math::WrappedMultiTF1 wfunc(*finter[bn], finter[bn]->GetNdim());
 ROOT::Fit::Fitter fitter;
 auto &cfg = fitter.Config();
 //fitter.Config().SetMinimizer("Minuit2", "Migrad");
-cfg.SetMinimizer("Minuit2", "Migrad");
-//auto &mopts = fitter.Config().MinimizerOptions();s
+cfg.SetMinimizer("Minuit2", "MINIMIZE");
+//auto &mopts = fitter.Config().MinimizerOptions();
 auto &mopts = cfg.MinimizerOptions();
 mopts.SetStrategy(0);
 mopts.SetPrintLevel(0);
@@ -726,13 +728,15 @@ cfg.ParSettings(ip).Release();
 
 
 
-
-if(good == 0 && wfnpulse[bn]>1){
+//if(good == 0 && wfnpulse[bn]>1){
+if(good == 0){
   cout<<"SET LIMITS HERE "<<wfnpulse[bn]<< endl;  
   cfg.ParSettings(3 + 2*(wfnpulse[bn]-1)).SetLowerLimit(0.05);
   cfg.ParSettings(3 + 2*(wfnpulse[bn]-1)).SetUpperLimit(10);
-  cfg.ParSettings(3 + 2*(wfnpulse[bn]-1)).Fix();        // pin it at your seed = 0.05
-   finter[bn]->SetParameter(3 + 2*(wfnpulse[bn]-1), 0.05);
+  if(wfnpulse[bn]>1)cfg.ParSettings(3 + 2*(wfnpulse[bn]-1)).Fix();        // pin it at your seed = 0.05
+   //finter[bn]->SetParameter(3 + 2*(wfnpulse[bn]-1), 0.05);
+   finter[bn]->SetParameter(3 + 2*(wfnpulse[bn]-1), 2.);
+
   }
 
 
@@ -771,17 +775,29 @@ if (!ok) {
 
 if(good == 0 && wfnpulse[bn]>1 && ok){
   //if a real pulse is found save the fit result first before releasing the ref pulse params
+  auto &tempresult = fitter.Result();
+  chi2[bn] = tempresult.Chi2()/tempresult.Ndf();
+  
+
+  cfg.ParSettings(3 + 2*(wfnpulse[bn]-1)).Release();  
   for (Int_t p = 0; p < wfnpulse[bn]; ++p) {
-      wfampl[bn][p] = finter[bn]->GetParameter(3 + 2*p);
-      wftime[bn][p]  = finter[bn]->GetParameter(2 + 2*p)*dt                     // convert bins → ns
+    std::cout
+    << " After intial fit ref amp par["<<refParIdx<<"] = "
+    << finter[bn]->GetParameter(refParIdx)
+    << "  ampl"
+    << tempresult.Parameter(3 + 2*p)<<endl;
+
+    wfampl[bn][p] = tempresult.Parameter(3 + 2*p);
+    wftime[bn][p]  = tempresult.Parameter(2 + 2*p)*dt                     // convert bins → ns
                + corr_time_HMS                // add HMS correction
                - cortime[bn]                  // subtract block‐by‐block cable delay
                - timerefacc*dt;               // subtract your reference‐time offset
 }
 
-  cfg.ParSettings(3 + 2*(wfnpulse[bn]-1)).Release();  
+  //cfg.ParSettings(3 + 2*(wfnpulse[bn]-1)).Release();  
   ok = fitter.LeastSquareFit(data);
   }
+
 
 /*
 for(int p=0; p<26;p++){
