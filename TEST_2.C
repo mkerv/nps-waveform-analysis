@@ -359,8 +359,6 @@ timerefacc = (calodist - 9.5) / (3.e8 * 1.e-9 * 4);
 
 	  //TF1 *finter[nblocks];
     std::vector<std::unique_ptr<TF1>> finter(nblocks); //object is now thread-local
-   // TH1F *hsig_i[nblocks];
-   std::vector<TH1F*> hsig_i(nblocks, nullptr);
     //Int_t pres[nblocks] = {0};
     std::vector<Int_t> pres(nblocks, 0);
   //  Double_t signal[nblocks][ntime];
@@ -412,7 +410,7 @@ ROOT::RVec<Double_t> wftime(nblocks * maxwfpulses, -100.0);
     Int_t binmax;
 
     // The fit function need to be moved into the scope of analyze to capture all variables (wfnpulse)
-    auto Fitwf = [=, &wfnpulse, &wfampl, &finter, &hsig_i, &wftime, &corr_time_HMS, &chi2](Double_t evt, Int_t bn)
+    auto Fitwf = [=, &wfnpulse, &wfampl, &finter, &wftime, &corr_time_HMS, &chi2](Double_t evt, Int_t bn)
     {
      // std::cout << ">>> Fitwf called for evt="<<evt<<" bn="<<bn<<std::endl;
 
@@ -464,69 +462,8 @@ ROOT::RVec<Double_t> wftime(nblocks * maxwfpulses, -100.0);
         cout << " block=" << bn << " finter is nullptr" << endl;
         return;
       }
-      if (!hsig_i[bn])
-      {
-        cout << ", block=" << bn << " hsig_i is nullptr" << endl;
-        return;
-      }
-      double maxamp=0.0;
-      for (Int_t it = 1; it < ntime - 6; it++) // loop over number of samples(110) in an event for a given block
-      {
-        if(maxamp<hsig_i[bn]->GetBinContent(it)){
-          maxamp=hsig_i[bn]->GetBinContent(it);
-          }
-      
 
-        // Condition over the number of samples in the pulse finding scheme
-        if (hsig_i[bn]->GetBinContent(it) < hsig_i[bn]->GetBinContent(it + 1) && hsig_i[bn]->GetBinContent(it + 1) < hsig_i[bn]->GetBinContent(it + 2) && hsig_i[bn]->GetBinContent(it + 2) < hsig_i[bn]->GetBinContent(it + 3) && hsig_i[bn]->GetBinContent(it + 3) <= hsig_i[bn]->GetBinContent(it + 4) && hsig_i[bn]->GetBinContent(it + 4) >= hsig_i[bn]->GetBinContent(it + 5) && hsig_i[bn]->GetBinContent(it + 5) >= hsig_i[bn]->GetBinContent(it + 6))
-       //above is new condition of 5 increasing samples and 2 decresaing. below is old: 4 up 1 down.
-        // if (hsig_i[bn]->GetBinContent(it + 1) < hsig_i[bn]->GetBinContent(it + 2) && hsig_i[bn]->GetBinContent(it + 2) < hsig_i[bn]->GetBinContent(it + 3) && hsig_i[bn]->GetBinContent(it + 3) <= hsig_i[bn]->GetBinContent(it + 4) && hsig_i[bn]->GetBinContent(it + 4) >= hsig_i[bn]->GetBinContent(it + 5))
-        {
-          if(hsig_i[bn]->GetBinContent(it + 4) > 2.0)
-          //temp always true to match wassims's 5amp criteria
-          //if (hsig_i[bn]->GetBinContent(it + 4) > 0)
-          {
-            // check if we exceeded the number of pulses
-            if (wfnpulse[bn] >= maxwfpulses)
-            {
-              cout << "Warning: wfnpulse[" << bn << "] exceeded maxwfpulses!" << endl;
-                wfnpulse[bn] = maxwfpulses - 1; // Prevent overflow
-            }
-
-            wfampl[bn * maxwfpulses + wfnpulse[bn]] = hsig_i[bn]->GetBinContent(it + 4); // get the amplitude of the pulse found
-
-            wftime[bn * maxwfpulses + wfnpulse[bn]] = hsig_i[bn]->GetBinCenter(it + 4); // get the time of the pulse found
-
-            // flag for the good pulse
-           //if (TMath::Abs(wftime[bn][wfnpulse[bn]] - timeref[bn] +(corr_time_HMS - cortime[bn]) / dt - timerefacc) < 4.)
-            if (TMath::Abs(wftime[bn * maxwfpulses + wfnpulse[bn]] - timeref[bn]) < 4.)
-            {
-              good = 1;
-             //cpulse = wfnpulse[bn];
-            }
-             //   cout<<"detection bloc "<<bn<<" pulse="<<wfnpulse[bn]<<" time="<<wftime[bn][wfnpulse[bn]]<<" (4ns) ampl="<<wfampl[bn][wfnpulse[bn]]<<" reftime= "<<timeref[bn]<<" (4ns) diff="<<TMath::Abs(wftime[bn][wfnpulse[bn]]-timeref[bn])<<" good="<<good<<endl;
-
-            wfnpulse[bn]++;
-           // cout<<"detection bloc "<<bn<<" pulse="<<wfnpulse[bn]<<" time="<<wftime[bn][wfnpulse[bn]-1]<<" (4ns) ampl="<<wfampl[bn][wfnpulse[bn]-1]<<" reftime= "<<timeref[bn]<<" (4ns) diff="<<TMath::Abs(wftime[bn][wfnpulse[bn]-1]-timeref[bn])<<" good="<<good<<endl;
-
-            // to prevent overflow
-            if (wfnpulse[bn] == maxwfpulses)
-            {
-              wfnpulse[bn] = maxwfpulses - 1;
-              it = ntime;
-            }
-            maxamp=hsig_i[bn]->GetBinContent(it+4);
-            it += 4;
-
-          } // end of the condition over (hsig_i[bn]->GetBinContent(it+4)>0){
-        } // end of the condition over samples
-      } // end of loop over it
-
-      if (maxamp < 2.0)
-      {
-       // cout << "Warning : All samples < 2.0mV. Skipping " << bn << endl;
-        return;
-      }
+/////////////////OLD WF PEAK FINDING WITH HSIG////////////
 
 
       if (wfnpulse[bn] > maxwfpulses - 2)
@@ -643,14 +580,16 @@ ROOT::RVec<Double_t> wftime(nblocks * maxwfpulses, -100.0);
       }
 
 //Prepare binned data from the histogram:
-int nBins = hsig_i[bn]->GetNbinsX();
-ROOT::Fit::BinData data(nBins, 1);
-for (int ib = 1; ib <= nBins; ++ib) {
-    double x[1] = { hsig_i[bn]->GetBinCenter(ib) };
-    double y    = hsig_i[bn]->GetBinContent(ib);
-    double err  = hsig_i[bn]->GetBinError(ib);
-    data.Add(x, y, err);
-}
+
+
+   ROOT::Fit::BinData data(ntime, /*nDim=*/1);
+   for (int ib = 0; ib < ntime; ++ib) {
+     double x[1] = { static_cast<double>(ib) };
+     double y    = signal[i*ntime + ib];
+     //double err  = std::sqrt(std::abs(y * 4.096 / 2.0)) / 4.096;
+     double err = Err[ib];
+     data.Add(x, y, err);
+   }
 
 
 
@@ -775,9 +714,7 @@ unsigned int ndf = result.Ndf(); // degrees of freedom :contentReference[oaicite
 
 chi2[bn] = tempchi2/ndf;
       
-      // Old Fit
-     // hsig_i[bn]->Fit(finter[bn].get(), "Q", "", 1., ntime);
-
+ 
       for(int p=0; p<26;p++){
         //std::cout<<p<<" : "<<finter[bn]->GetParameter(p)<<endl;
      //   std::cout<<p<<" : "<<result.Parameter(3 + 2*p)<<endl;
@@ -808,21 +745,6 @@ chi2[bn] = tempchi2/ndf;
         Sampped[i] = -100;
         Sampener[i] = -100;
         Npulse[i] = 0;
-
-
-      // avoid threads creating hsig with same name at same time(before object deletion)
-      TThread* me = TThread::Self();
-      Long_t rootTid = me ? me->GetId() : -1;
-      TString hname = Form("hsig_i_evt%.0f_thr%ld_blk%d", evt, rootTid, i);
-        hsig_i[i] = new TH1F(hname, hname, ntime, 0, ntime);
-        //hsig_i[i] = new TH1F(Form("hsig_i%d", i), Form("hsig_i%d", i), ntime, 0, ntime);
-        hsig_i[i]->SetLineColor(1);
-        hsig_i[i]->SetLineWidth(2);
-        hsig_i[i]->GetXaxis()->SetTitle("Time (4 ns)");
-        hsig_i[i]->GetYaxis()->SetTitle("(mV)");
-        hsig_i[i]->GetYaxis()->SetLabelSize(0.05);
-
-
 
       } // liste de presence des blocs! pres=0 si bloc absent, pres=1 s'il est present
       std::fill(signal.begin(), signal.end(), 0.);
@@ -860,10 +782,9 @@ chi2[bn] = tempchi2/ndf;
             {
               if (bloc > -0.5 && bloc < nblocks)
               {
-                //signal[bloc][it] = SampWaveForm[ns];
                 signal[ bloc * ntime + it ] = SampWaveForm[ns];
-                //hsig_i[bloc]->SetBinContent(it + 1, signal[bloc][it]);
-                hsig_i[bloc]->SetBinContent(it + 1, signal[bloc*ntime + it]);
+                minsignal[ bloc ] = TMath::Min(minsignal[ bloc ], signal[ bloc*ntime + it ]);
+
               }
               ns++;
             }
@@ -902,7 +823,6 @@ chi2[bn] = tempchi2/ndf;
         if (adcCounter[iNdata] >= 0 && adcCounter[iNdata] < nblocks)
         {
           Npulse[(int)(adcCounter[iNdata])] += 1;
-          hsig_i[(int)(adcCounter[iNdata])]->SetLineColor(2); // why are we doing this here??
 
           if (Npulse[(int)(adcCounter[iNdata])] == 1)
           {
@@ -931,15 +851,16 @@ chi2[bn] = tempchi2/ndf;
         {
           for (Int_t it = 0; it < nsamp; it++)
           {
-            hsig_i[i]->SetBinError(it + 1, TMath::Sqrt(TMath::Abs(hsig_i[i]->GetBinContent(it + 1) * 4.096/2.)) / 4.096);
+            Double_t y = signal[i*ntime + it];
+            Double_t e = std::sqrt(std::abs(y * 4.096 / 2.)) / 4.096;
 
-            if (hsig_i[i]->GetBinContent(it + 1) < 1.)
+            if (e < 1.)
             {
-              hsig_i[i]->SetBinError(it + 1, TMath::Sqrt(TMath::Abs(1. * 4.096/2.)) / 4.096);
+              e = std::sqrt(std::abs(1.0 * 4.096 / 2.)) / 4.096;
             }
+            Err[it] = e;
           }
 
-          //if (!hsig_i[i]) continue; 
           //if (wfnpulse[i] == 0) continue; 
             Fitwf(evt,i); // We call the fit here
             finter[i]->SetLineColor(kBlue);
@@ -1138,13 +1059,8 @@ if((int)evt % 1000 == 0){
     //end of diagnostic snippet 
 */
 
-    for (int i = 0; i < nblocks; ++i) {
-      if (hsig_i[i]) {
-      delete hsig_i[i];
-      hsig_i[i] = nullptr;
-      }
-  }
-  
+
+
 //std::cout << "evt=" << evt << ": " << nonzero << " non-empty histograms\n";
     tlambda.Stop();
     return std::make_tuple(chi2, ampl, amplwf, wfnpulse, Sampampl, Samptime, timewf, enertot, integtot, pres, corr_time_HMS, h1time, h2time, wfampl, wftime);
