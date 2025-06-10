@@ -36,6 +36,8 @@
 #include "Math/WrappedMultiTF1.h"
 #include <TKey.h>
 #include "TThread.h"
+#include "TSpectrum.h"
+#include "TLine.h"
 
 
 template <typename T>
@@ -55,6 +57,21 @@ const int nsignals = nblocks * maxpulses;
 const int maxwfpulses = 12; // nb maximal de pulses que la wfa peut trouver
 const int ntemp = 56;       // nb of temp sensors
 std::atomic<int> nFitFailures{0};
+
+
+// Matched Filter constants
+const int mfleft = 5;                     // start bin of the refwf used as a filter = max of the refwf - mfleft
+const int mfright = 5;                    // end bin of the refwf used as a filter = max of the refwf + mfright
+const int mfwidth = mfleft + mfright + 1; // width of the refwf used as a filter (4ns units)
+const int mfstart = 10;                   // Search for peaks in the wf between bins mfstart and mfend (4ns units)
+const int mfend = 100;                    // Search for peaks in the wf between bins mfstart and mfend (4ns units)
+const double specthres = 0.01;            // peaks with amplitude less than specthres*highest_peak are discarded when TSpectrum::Search() is called
+const double mfthres = 0.5;               // peaks with amplitude less than mfthres in the mf of the wf are discarded
+const double trig_thres = 10;             // threshold (mV) on sum of 3x3 wf to allow the fit of the central wf
+const int coinc_width = 20;               // (4ns units) the trig_thres will be applied on sum of 3x3 wf in the region {expected coinc time +/- coinc_width} instead of all wf range
+Double_t mfyref[nblocks][mfwidth];        // part of the refwf that will be used in the MF
+Double_t mfint[nblocks];
+
 
 Double_t timeref[nblocks];
 Float_t cortime[nblocks];
@@ -94,6 +111,156 @@ fout->Close();
 fin->Close();
 return true;
 }
+///////////////////////////////////////////////////////////// Peak Finding Function /////////////////////////////////////////////////////////////
+void FindPulsesMF(int                                  bn,
+             const Double_t                       fullSigArr[],   // length = nblocks * ntime
+             const std::vector<Int_t>&            pres,           // size = nblocks
+             Double_t                             minsignal,
+             const Double_t                       mfyref[][mfwidth], // [nblocks][mfwidth]
+             const Double_t                       mfint[],        // length = nblocks
+             Double_t                             timeref_bin,    // in sample‐units
+             Double_t                             timerefacc,     // in sample‐units
+             Int_t&                               wfnpulse_out,   // output: how many pulses found
+             ROOT::RVec<Double_t>&                wftime_out,     // size = nblocks*maxwfpulses
+             ROOT::RVec<Double_t>&                wfampl_out     // size = nblocks*maxwfpulses
+             )
+{
+
+  if (pres[bn] == 0) {
+    wfnpulse_out = 0;
+    return;
+  }
+
+      // 1) Zero‐initialize wfnpulse_out + amplitudes:
+      wfnpulse_out = 0;
+      for (int p = 0; p < maxwfpulses; ++p) {
+          wfampl_out[bn * maxwfpulses + p] = -1.0;
+      }
+  
+      // 2) Build the matched‐filter array mfVals[0..ntime−1]:
+      std::array<Double_t, ntime> mfVals;
+      mfVals.fill(0.0);
+      Double_t  mfmin = 1.0e6;
+
+          // Convolution: for it in [mfleft .. ntime−mfright−1],
+    //   mfVals[it] = sum_{jt=0..mfwidth−1} ( (sigArr[it + jt − mfright] − minsignal) * reversed_kernel )
+    // where reversed_kernel = mfyref[bn][mfwidth−1−jt], normalized by mfint[bn].
+      for (int it = mfleft; it < ntime - mfright; ++it) {
+        Double_t acc = 0.0;
+        for (int jt = 0; jt < mfwidth; ++jt) {
+            Double_t raw  = fullSigArr[ bn * ntime + (it + jt - mfright) ];
+            Double_t delta = raw - minsignal;
+            Double_t kern  = mfyref[bn][ mfwidth - 1 - jt ];
+            acc += (delta * kern) / mfint[bn];
+        }
+        mfVals[it] = acc;
+        if (acc < mfmin) mfmin = acc;
+    }
+        // Subtract the minimum so mfVals ⩾ 0:
+        for (int it = mfleft; it < ntime - mfright; ++it) {
+          mfVals[it] -= mfmin;
+      }
+
+          // 3) TSpectrum peak‐finding on mfVals[]:
+   // TSpectrum spec(maxwfpulses);
+   // const Int_t npeaks = spec.Search(mfVals.data(), ntime,2, "nobackground", specthres);
+
+    // 1) Create a small TH1F of length ntime:
+std::unique_ptr<TH1F> hMF(new TH1F("hMF", "MF values", ntime, 0, ntime));
+for (int i = 0; i < ntime; ++i) {
+  //why did we shift by1
+  hMF->SetBinContent(i + 1, mfVals[i]);
+}
+
+// 2) Now call TSpectrum::Search(const TH1*, …):
+TSpectrum spec(maxwfpulses);
+Int_t npeaks = spec.Search(hMF.get(), 2, "nobackground", specthres);
+
+
+
+        // Loop over TSpectrum’s found peaks, record those within [mfstart..mfend], amplitude > mfthres:
+        for (int ip = 0; ip < npeaks && wfnpulse_out < maxwfpulses; ++ip) {
+          Double_t xpos = spec.GetPositionX()[ip] - 2.0; // shift by 2 bins, just like the single‐threaded code
+          Double_t ypos = spec.GetPositionY()[ip];
+          if (xpos > std::max(mfstart, 0) && xpos < std::min(mfend, ntime - 1) && ypos > mfthres) {
+              int ti = static_cast<int>(std::round(xpos));
+              // raw amplitude = | raw_waveform(ti) − minsignal |
+              Double_t rawAmp = std::abs( fullSigArr[ bn * ntime + ti ] - minsignal );
+              wfampl_out[ bn * maxwfpulses + wfnpulse_out ] = rawAmp;
+              wftime_out[ bn * maxwfpulses + wfnpulse_out ] = xpos;
+              wfnpulse_out++;
+          }
+      }
+  
+      if (wfnpulse_out > maxwfpulses - 2) {
+        std::cout << "Warning: high number of pulses in block " << bn
+                  << " (wfnpulse=" << wfnpulse_out << ")\n";
+    }
+
+    cout<<"block "<<bn<<"  n pulses="<<wfnpulse_out<<endl;
+return;
+
+}
+/////////////////////////////////////////////////////////////Function to check cluster energy threshold///////////////////////////////////////////////////////////////////////
+bool PassClusterThreshold(int                               bn,
+  const Double_t                    fullSigArr[],   // length = nblocks*ntime
+  const std::vector<Int_t>&         pres,           // size = nblocks
+  int                               ncol,
+  int                               nlin,
+  int                               nblocks,
+  int                               ntime,
+  Double_t                          timeref_bin,    // in sample units
+  Double_t                          timerefacc,     // in sample units
+  Double_t                          trig_thres,     // mV threshold
+  int                               coinc_width)    // in sample units
+{
+
+      // 1) Compute the “center time” around which we look for the 3×3 sum:
+      Double_t center = timeref_bin + timerefacc;
+
+  int row = bn / ncol;
+  int col = bn % ncol;
+
+      // 3) For each time‐bin it ∈ [0..ntime−1], sum this block + all 8 neighbors (if present).
+      Double_t globalMin =  1e6;
+      Double_t maxInWindow = -1e6;
+
+
+
+  for (int it = 0; it < ntime; ++it) {
+    // Start with the raw sample from block `bn`:
+    Double_t sum3x3 = fullSigArr[ bn*ntime + it ];
+
+    // Look at all eight offsets (Δrow, Δcol):
+    static const int dR[8] = {  0,  0, +1, -1, +1, +1, -1, -1 };
+    static const int dC[8] = { +1, -1,  0,  0, +1, -1, +1, -1 };
+
+    for (int k = 0; k < 8; ++k) {
+        int nr = row + dR[k];
+        int nc = col + dC[k];
+        if (nr < 0 || nr >= nlin || nc < 0 || nc >= ncol) continue;
+        int nb = nr * ncol + nc;
+        if (pres[nb] == 1) {
+            sum3x3 += fullSigArr[ nb*ntime + it ];
+        }
+    }
+    if (sum3x3 < globalMin) {
+        globalMin = sum3x3;
+    }
+    // If this time‐bin is inside the “coincidence window,” track its max:
+    if (std::abs(double(it) - center) < coinc_width) {
+        if (sum3x3 > maxInWindow) {
+            maxInWindow = sum3x3;
+        }
+    }
+}
+
+    // 4) After scanning all it: if (maxInWindow - globalMin) > trig_thres → pass
+    return ((maxInWindow - globalMin) > trig_thres);
+
+}
+
+
 /////////////////////////////////////////////////////////////MAIN FUNCTION ///////////////////////////////////////////////////////////////////////
 void TEST_2(int run, int seg, int threads)
 {
@@ -116,7 +283,7 @@ void TEST_2(int run, int seg, int threads)
   }
   testOpen->Close();
 
-TString outFile = Form("/volatile/hallc/nps/kerver/ROOTfiles/WF/nps_production_%d_%d_%d_interactive_infheap_test_sorted.root", run, seg,nthreads);
+TString outFile = Form("/volatile/hallc/nps/kerver/ROOTfiles/WF/nps_production_%d_%d_%d_interactive_tspec.root", run, seg,nthreads);
 
 if (!FastCloneAndFilter(filename, outFile)) {
   std::cerr<<"Clone failed!\n";
@@ -127,7 +294,7 @@ t.Continue();
 
 
   // ENABLE MT
-  ROOT::EnableImplicitMT(nthreads);
+ // ROOT::EnableImplicitMT(nthreads);
   std::cout << "Implicit MT enabled: " << ROOT::IsImplicitMTEnabled() << "\n";
   std::cout << "Number of threads: " << ROOT::GetThreadPoolSize() << "\n";
 
@@ -169,7 +336,7 @@ chain.SetBranchStatus("NPS.cal.fly.adcSampPulseTimeRaw",1);
   // Define a new RDataFrame that processes only 1% of the events
   auto nEventsToProcess = nEntriesDF / 1000;
   //auto df1percent = df.Range(0, nEventsToProcess);
-  //auto df1percent = df.Range(9999, 12000);
+  auto df1percent = df.Range(0, 5);
 
   Double_t dt = 4.;                                    // time bin (sample) width (4 ns), the total time window is then ntime*dt
   const int nslots = 1104;                             // nb maximal de slots dans tous les fADC
@@ -257,6 +424,18 @@ chain.SetBranchStatus("NPS.cal.fly.adcSampPulseTimeRaw",1);
                 }
             
     }
+    mfint[i] = 0;
+    for (Int_t it = 0; it < ntime; it++)
+    {
+        if (TMath::Abs(timeref[i] - interpX[i][it]) < 0.001)
+        {
+            for (Int_t jt = 0; jt < mfwidth; jt++)
+            {
+                mfyref[i][jt] = interpY[i][it + jt - mfleft];
+                mfint[i] += mfyref[i][jt];
+            }
+        }
+    }
     preswf[i]=1;
    }
     filewf.close();
@@ -277,8 +456,8 @@ chain.SetBranchStatus("NPS.cal.fly.adcSampPulseTimeRaw",1);
      filetime.close();
 
   // Load only required branches into dataframe
-  auto df2 = df.Define("NSampWaveForm", "Ndata.NPS.cal.fly.adcSampWaveform")
-  //  auto df2 = df1percent.Define("NSampWaveForm", "Ndata.NPS.cal.fly.adcSampWaveform")
+  //auto df2 = df.Define("NSampWaveForm", "Ndata.NPS.cal.fly.adcSampWaveform")
+    auto df2 = df1percent.Define("NSampWaveForm", "Ndata.NPS.cal.fly.adcSampWaveform")
                  .Define("SampWaveForm", "NPS.cal.fly.adcSampWaveform")
                  .Define("NadcCounter", "Ndata.NPS.cal.fly.adcCounter")
                  .Define("adcCounter", "NPS.cal.fly.adcCounter")
@@ -342,10 +521,6 @@ timerefacc = (calodist - 9.5) / (3.e8 * 1.e-9 * 4);
   ROOT::RDF::TH1DModel m_h1time("h1time", "pulse (>20mV) shift (4*ns units) relatively to elastic refwf (all found pulses included)", 200, -50, 50);
   ROOT::RDF::TH1DModel m_h2time("h2time", "pulse (>20mV) time (ns) (all found pulses included)", 200, -100, 100);
  
- //Fill with finter[blocknum]->GetParameter(2 + 2 * p), 1.) and wfttime[blocknumn][numpulses] 
-  // auto h1time = df2.Histo1D(m_h1time ,"");
-// auto h2time = df2.Histo1D(m_h2time ,"");
-
   /////// ANALYZE //////////////////////////////////////////////////////////
 
   // this is where sequential event loop was
@@ -361,8 +536,9 @@ timerefacc = (calodist - 9.5) / (3.e8 * 1.e-9 * 4);
     std::vector<std::unique_ptr<TF1>> finter(nblocks); //object is now thread-local
     //Int_t pres[nblocks] = {0};
     std::vector<Int_t> pres(nblocks, 0);
-  //  Double_t signal[nblocks][ntime];
-  std::vector<Double_t> signal(nblocks * ntime);
+    std::vector<Double_t> signal(nblocks * ntime);
+    std::vector<Double_t> minsignal(nblocks,  1e6);
+    std::array<Double_t,ntime> Err{};
 
     Int_t bloc, nsamp;
 
@@ -373,8 +549,6 @@ timerefacc = (calodist - 9.5) / (3.e8 * 1.e-9 * 4);
     std::vector<Double_t> timewf(nblocks, -100);
     std::vector<Double_t> amplwf(nblocks, -100);
     std::vector<Double_t> chi2(nblocks, -100.0);
-  //  std::vector<Double_t> h1time(nblocks, -1.0);
-  //  std::vector<Double_t> h2time(nblocks, -1.0);
     std::vector<Double_t> h1time;
     std::vector<Double_t> h2time;
     Double_t ener[nblocks];
@@ -410,9 +584,9 @@ ROOT::RVec<Double_t> wftime(nblocks * maxwfpulses, -100.0);
     Int_t binmax;
 
     // The fit function need to be moved into the scope of analyze to capture all variables (wfnpulse)
-    auto Fitwf = [=, &wfnpulse, &wfampl, &finter, &wftime, &corr_time_HMS, &chi2](Double_t evt, Int_t bn)
+    auto Fitwf = [=, &wfnpulse, &wfampl, &finter, &wftime, &corr_time_HMS, &chi2](Double_t evt, Int_t bn, const Double_t Err_arr[])
     {
-     // std::cout << ">>> Fitwf called for evt="<<evt<<" bn="<<bn<<std::endl;
+      std::cout << ">>> Fitwf called for evt="<<evt<<" bn="<<bn<<" wfnpulse= "<<wfnpulse[bn]<<std::endl;
 
   // Build a thread‐local Interpolator
   auto interpPtr = std::make_shared<ROOT::Math::Interpolator>(
@@ -448,15 +622,13 @@ ROOT::RVec<Double_t> wftime(nblocks * maxwfpulses, -100.0);
 
 
       std::string fname = Form("finter_bn%d_ptr%p_evt%.0f", bn, (void*)finter[bn].get(), evt);
-      finter[bn] = std::make_unique<TF1>(fname.c_str(), func, -200, ntime + 200, nbparameters);
+     // finter[bn] = std::make_unique<TF1>(fname.c_str(), func, -200, ntime + 200, nbparameters);
+      finter[bn] = std::make_unique<TF1>(fname.c_str(), func, -200, ntime + 200, wfnpulse[bn]*2+2);
+
       finter[bn]->FixParameter(0, bn);
       finter[bn]->SetNpx(1100);
-      // Detect the pulses
 
-      wfnpulse[bn] = 0;
-      Int_t good = 0;
-
-
+   
       if (!finter[bn])
       {
         cout << " block=" << bn << " finter is nullptr" << endl;
@@ -472,126 +644,44 @@ ROOT::RVec<Double_t> wftime(nblocks * maxwfpulses, -100.0);
       }
 
       // Adjust the parameters of the fit function
-
+/*
       for (Int_t p = 0; p < maxwfpulses; p++)
       {
         finter[bn]->FixParameter(2 + 2 * p, 0.);
         finter[bn]->FixParameter(3 + 2 * p, 0.);
       }
-
-
-      if (wfnpulse[bn] > 0 && good == 1)
+        */
+      if (wfnpulse[bn] > 0)
       {
         for (Int_t p = 0; p < TMath::Min(maxwfpulses, wfnpulse[bn]); p++)
         {
           finter[bn]->ReleaseParameter(2 + 2 * p);
-          finter[bn]->ReleaseParameter(3 + 2 * p);
-
-    //finter[bn]->SetParameter(2 + 2 * p, wftime[bn][p] - timeref[bn]);
-          //finter[bn]->SetParameter(2 + 2 * p, wftime[bn][p] - timeref[bn] + (corr_time_HMS - cortime[bn]) / dt);   
+          finter[bn]->ReleaseParameter(3 + 2 * p); 
           finter[bn]->SetParameter(2 + 2 * p, wftime[bn * maxwfpulses + p ]- timeref[bn]);   
           finter[bn]->SetParameter(3 + 2 * p, wfampl[bn * maxwfpulses + p ]);
-
-
-          //finter[bn]->SetParLimits(2 + 2 * p, wftime[bn][p] - timeref[bn] - 3, wftime[bn][p] - timeref[bn] + 3);
-          //finter[bn]->SetParLimits(2 + 2 * p, wftime[bn][p] - timeref[bn] + (corr_time_HMS - cortime[bn]) / dt - 3, wftime[bn][p] - timeref[bn] + (corr_time_HMS - cortime[bn]) / dt + 3);
-          finter[bn]->SetParLimits(2 + 2 * p, wftime[bn * maxwfpulses + p ]- timeref[bn] - 3, wftime[bn * maxwfpulses + p ]- timeref[bn] + 3);
-
-          finter[bn]->SetParLimits(3 + 2 * p, wfampl[bn * maxwfpulses + p ] * 0.2, wfampl[bn * maxwfpulses + p ] * 3);   
+          finter[bn]->SetParLimits(2 + 2 * p, wftime[bn * maxwfpulses + p ]- timeref[bn] - 4, wftime[bn * maxwfpulses + p ]- timeref[bn] + 4);
+          finter[bn]->SetParLimits(3 + 2 * p, wfampl[bn * maxwfpulses + p ] * 0.2, wfampl[bn * maxwfpulses + p ] * 5);   
 
         }
-      }
-
-      if (wfnpulse[bn] > 0 && good == 0)
-      {
-        for (Int_t p = 0; p < TMath::Min(maxwfpulses, wfnpulse[bn]); p++)
-        {
-          finter[bn]->ReleaseParameter(2 + 2 * p);
-          finter[bn]->ReleaseParameter(3 + 2 * p);
-          finter[bn]->SetParameter(2 + 2 * p, wftime[bn * maxwfpulses + p ] - timeref[bn]);
-         // finter[bn]->SetParameter(2 + 2 * p, wftime[bn][p] - timeref[bn] + (corr_time_HMS - cortime[bn]) / dt);
-          finter[bn]->SetParameter(3 + 2 * p, wfampl[bn * maxwfpulses + p ]);
-          finter[bn]->SetParLimits(2 + 2 * p, wftime[bn * maxwfpulses + p ] - timeref[bn] - 3, wftime[bn * maxwfpulses + p ] - timeref[bn] + 3);
-          //finter[bn]->SetParLimits(2 + 2 * p, wftime[bn][p] - timeref[bn] + (corr_time_HMS - cortime[bn]) / dt - 3, wftime[bn][p] - timeref[bn] + (corr_time_HMS - cortime[bn]) / dt + 3);
-
-          finter[bn]->SetParLimits(3 + 2 * p, wfampl[bn * maxwfpulses + p ] * 0.2, wfampl[bn * maxwfpulses + p ] * 3);
-        }
-
-        // On recherche quand meme un eventuel pulse en temps
-        //cpulse = wfnpulse[bn];
-
-        finter[bn]->ReleaseParameter(2 + 2 * wfnpulse[bn]);
-        finter[bn]->ReleaseParameter(3 + 2 * wfnpulse[bn]);
-         finter[bn]->SetParameter(2 + 2 * wfnpulse[bn], 0.);
-       // finter[bn]->SetParameter(2 + 2 * wfnpulse[bn], timerefacc);
-        //finter[bn]->SetParameter(2 + 2 * wfnpulse[bn], timerefacc + (corr_time_HMS - cortime[bn]) / dt);
-        finter[bn]->SetParameter(3 + 2 * wfnpulse[bn], 2);
-         // finter[bn]->SetParLimits(2 + 2 * wfnpulse[bn],  - 1, 1);
-      //  finter[bn]->SetParLimits(2 + 2 * wfnpulse[bn], timerefacc - 4, timerefacc + 4);
-        //finter[bn]->SetParLimits(2 + 2 * wfnpulse[bn], timerefacc + (corr_time_HMS - cortime[bn]) / dt - 4, timerefacc + (corr_time_HMS - cortime[bn]) / dt + 4);
-
-        finter[bn]->SetParLimits(3 + 2 * wfnpulse[bn], 0.05, 10);
-
-        wfnpulse[bn]++;
-       
-      }
-
-      if (wfnpulse[bn] == 0)
-      {
-       // cout<<"NO PULSE "<<bn<<" pulse="<<wfnpulse[bn]<<" time="<<wftime[bn][wfnpulse[bn]]<<" (4ns) ampl="<<wfampl[bn][wfnpulse[bn]]<<" reftime= "<<timeref[bn]<<" (4ns) diff="<<TMath::Abs(wftime[bn][wfnpulse[bn]]-timeref[bn])<<" good="<<good<<endl;
-
-        for (Int_t p = 0; p < 1; p++)
-        {
-          finter[bn]->ReleaseParameter(2 + 2 * p);
-          finter[bn]->ReleaseParameter(3 + 2 * p);
-
-          finter[bn]->SetParameter(2 + 2 * p, 0);
-          //finter[bn]->SetParameter(2 + 2 * p, timerefacc);
-          //finter[bn]->SetParameter(2 + 2 * p, timerefacc + (corr_time_HMS - cortime[bn]) / dt);
-          finter[bn]->SetParameter(3 + 2 * p, 2);
-
-         // finter[bn]->SetParLimits(2 + 2 * p,  - 1, 1);
-          //finter[bn]->SetParLimits(2 + 2 * p, timerefacc - 4, timerefacc + 4);
-          //finter[bn]->SetParLimits(2 + 2 * p, timerefacc + (corr_time_HMS - cortime[bn]) / dt - 4, timerefacc + (corr_time_HMS - cortime[bn]) / dt + 4);
-
-          finter[bn]->SetParLimits(3 + 2 * p, 0.05, 10);
-
-       // finter[bn]->FixParameter(2 + 2 * p, timerefacc + (corr_time_HMS - cortime[bn]) / dt);
-       finter[bn]->FixParameter(2 + 2 * p, 0);
-
-          finter[bn]->FixParameter(3 + 2 * p, 2);
-          finter[bn]->ReleaseParameter(1);
-        }
-
-        wfnpulse[bn]++;
       }
 
       finter[bn]->SetParameter(1, 0.);
       finter[bn]->SetParLimits(1, -100, 100.);
-/*
-      std::cout<<"  [DEBUG] before final fix: wfnpulse="<<wfnpulse[bn]
-         <<"  maxwfpulses="<<maxwfpulses<<std::endl;
-*/
 
 
-      for (int p = wfnpulse[bn]; p < maxwfpulses; ++p) {
-        finter[bn]->FixParameter(2 + 2*p, 0.);
-        finter[bn]->FixParameter(3 + 2*p, 0.);
-      }
 
 //Prepare binned data from the histogram:
-
 
    ROOT::Fit::BinData data(ntime, /*nDim=*/1);
    for (int ib = 0; ib < ntime; ++ib) {
      double x[1] = { static_cast<double>(ib) };
-     double y    = signal[i*ntime + ib];
+     double y    = signal[bn*ntime + ib];
      //double err  = std::sqrt(std::abs(y * 4.096 / 2.0)) / 4.096;
-     double err = Err[ib];
+     double err = Err_arr[ib];
+     //temp delete!
+     err=1.0;
      data.Add(x, y, err);
    }
-
-
 
 
 //Wrap TF1 into a IModelFunction via WrappedMultiTF1:
@@ -600,62 +690,27 @@ ROOT::Math::WrappedMultiTF1 wfunc(*finter[bn], finter[bn]->GetNdim());
 ROOT::Fit::Fitter fitter;
 auto &cfg = fitter.Config();
 //fitter.Config().SetMinimizer("Minuit2", "Migrad");
-//cfg.SetMinimizer("Minuit2", "Migrad");
-cfg.SetMinimizer("Minuit2", "MINIMIZE");
+cfg.SetMinimizer("Minuit2", "Migrad");
+//cfg.SetMinimizer("Minuit2", "MINIMIZE");
 //auto &mopts = fitter.Config().MinimizerOptions();
 auto &mopts = cfg.MinimizerOptions();
 mopts.SetStrategy(0);
-mopts.SetPrintLevel(0);
+mopts.SetPrintLevel(1);
 mopts.SetMaxIterations(1000);
 fitter.SetFunction(wfunc, false);
 
-
-cfg.CreateParamsSettings(wfunc);
-
-int nFloat = 2 + 2*wfnpulse[bn];
-for (int ip = nFloat; ip < nbparameters; ++ip)
-cfg.ParSettings(ip).Fix();  
-for (int ip = 1; ip < nFloat; ++ip)
-cfg.ParSettings(ip).Release();
-
-//if(good == 0 && wfnpulse[bn]>1){
-  if(good == 0){
-  //cout<<"SET LIMITS HERE "<<wfnpulse[bn]<< endl;  
-  cfg.ParSettings(3 + 2*(wfnpulse[bn]-1)).SetLowerLimit(0.05);
-  cfg.ParSettings(3 + 2*(wfnpulse[bn]-1)).SetUpperLimit(10);
-  if(wfnpulse[bn]>1)cfg.ParSettings(3 + 2*(wfnpulse[bn]-1)).Fix();        // pin it at your seed = 0.05
-
-   finter[bn]->SetParameter(3 + 2*(wfnpulse[bn]-1), 2.);
-  }
-
-cfg.ParSettings(0).Fix();  
-
+cout<<"pre-fit params: ";
+for (int ip = 0; ip < finter[bn]->GetNpar(); ++ip) {
+  cout<<finter[bn]->GetParameter(ip)<<" , ";
+}
+cout<<endl;
 
 
 bool ok = fitter.LeastSquareFit(data);
 if (!ok) {
   std::cerr<<"Failed once for event "<<evt<<", block "<<bn<<"\n";
 }
-
-cfg.ParSettings(3 + 2*(wfnpulse[bn]-1)).Release();  
-if(good == 0 && wfnpulse[bn]>1 && ok){
-  //if a real pulse is found save the fit result first before releasing the ref pulse params
-  auto &tempresult = fitter.Result();
-  chi2[bn] = tempresult.Chi2()/tempresult.Ndf();
-      
-  for (Int_t p = 0; p < wfnpulse[bn]; ++p) {
-    wfampl[bn * maxwfpulses + p ] = tempresult.Parameter(3 + 2*p);
-    wftime[bn * maxwfpulses + p ]  = tempresult.Parameter(2 + 2*p)*dt                     // convert bins → ns
-               + corr_time_HMS                // add HMS correction
-               - cortime[bn]                  // subtract block‐by‐block cable delay
-               - timerefacc*dt;               // subtract your reference‐time offset
-}  
-
-// cfg.ParSettings(3 + 2*(wfnpulse[bn]-1)).Release(); 
-  ok = fitter.LeastSquareFit(data);
-  }
-
-
+  
 if (!ok) {
   // retry just this one with a tougher configuration
  // cout<<"FAILED Again, retry"<<endl;
@@ -665,10 +720,9 @@ if (!ok) {
   ok = fitter.LeastSquareFit(data);
 }
 if (!ok) {
-//  std::cerr<<"STILL Fit failed for event "<<evt<<", block "<<bn<<"\n";
+  std::cerr<<"STILL Fit failed for event "<<evt<<", block "<<bn<<"\n";
  //failcount++;
  nFitFailures.fetch_add(1, std::memory_order_relaxed);
- if(good == 0 && wfnpulse[bn]>1) return;
  for (int p = 0; p < wfnpulse[bn]; p++)
   {
   wftime[bn * maxwfpulses + p ] = -1000;
@@ -702,7 +756,7 @@ auto &result = fitter.Result();
                    + corr_time_HMS                // add HMS correction
                    - cortime[bn]                  // subtract block‐by‐block cable delay
                    - timerefacc*dt;               // subtract your reference‐time offset
-
+        cout<< wfampl[bn * maxwfpulses + p ]<<"   +  "<<binOff<<endl;
     }
   unsigned npar = result.NPar();
   for(unsigned ip=0; ip<npar; ++ip) {
@@ -713,16 +767,7 @@ auto &result = fitter.Result();
 unsigned int ndf = result.Ndf(); // degrees of freedom :contentReference[oaicite:1]{index=1}
 
 chi2[bn] = tempchi2/ndf;
-      
- 
-      for(int p=0; p<26;p++){
-        //std::cout<<p<<" : "<<finter[bn]->GetParameter(p)<<endl;
-     //   std::cout<<p<<" : "<<result.Parameter(3 + 2*p)<<endl;
-    }
-
-      for(int np=0;np<wfnpulse[bn];np++){
-       //std::cout<<wfampl[bn][np]<<"  "<<wftime[bn][np]<<endl;
-      }
+     
 
     };
 
@@ -783,7 +828,7 @@ chi2[bn] = tempchi2/ndf;
               if (bloc > -0.5 && bloc < nblocks)
               {
                 signal[ bloc * ntime + it ] = SampWaveForm[ns];
-                minsignal[ bloc ] = TMath::Min(minsignal[ bloc ], signal[ bloc*ntime + it ]);
+                minsignal[bloc] = TMath::Min(minsignal[bloc], signal[ bloc*ntime + it ]);
 
               }
               ns++;
@@ -860,42 +905,40 @@ chi2[bn] = tempchi2/ndf;
             }
             Err[it] = e;
           }
+//Get the number of pulses from tspecrtum
+FindPulsesMF(i,signal.data(),pres,minsignal[i],mfyref,mfint,timeref[i],timerefacc,wfnpulse[i],wftime,wfampl);
+bool okToFit = PassClusterThreshold(i,signal.data(),pres,ncol,nlin,nblocks,ntime,timeref[i],timerefacc,trig_thres,coinc_width);
 
-          //if (wfnpulse[i] == 0) continue; 
-            Fitwf(evt,i); // We call the fit here
-            finter[i]->SetLineColor(kBlue);
-            finter[i]->SetLineWidth(2);
-    
 
-          // **Add this check to skip the block if finter[i] is invalid**
-          if (!finter[i])
-          {
-            cout << "Skipping block " << i << " due to missing finter[" << i << "] at event " << evt << endl;
-            continue;
-          }
-          //cout << i << "  cpulse =" << cpulse << " wfnpulse1= " << wfnpulse1[i] << endl;
-          //chi2[i] = finter[i]->GetChisquare() / finter[i]->GetNDF();
+if (okToFit) {
+  cout<<evt<<" passed cluster threshold for block "<<i<<endl;
+  Fitwf(evt, i, Err.data());
+  if (finter[i]) {
+    finter[i]->SetLineColor(kBlue);
+    finter[i]->SetLineWidth(2);
+  }
+  else {
+    cout << "Failed to create TF1 in Fitwf for block " << i << ", event " << evt << endl;
+  }
+}
+else {
+  // We decided NOT to fit this block, so explicitly leave finter[i] == nullptr
+  // and skip every attempt to use it.
+ 
+  continue;
+}
+          
 
           for (Int_t p = 0; p < TMath::Max(wfnpulse[i], 1); p++)
           {
-
-           // wftime[i][p] = finter[i]->GetParameter(2 + 2 * p) * dt + corr_time_HMS; // temps du pulse en ns
-           // wftime[i][p] = finter[i]->GetParameter(2 + 2 * p) * dt + corr_time_HMS - cortime[i] - timerefacc * dt;
-
-           // wfampl[i][p] = finter[i]->GetParameter(3 + 2 * p); // amplitude du pulse en ns
 
             if (wfampl[i * maxwfpulses + p ] > 20)
             {
 
               /// fix later //// diagnostic histos
               
-               // h2time->Fill(wftime[i][p], 1.);
-               //h2time[i]=wftime[i][p];
+
                h2time.push_back(wftime[i * maxwfpulses + p ]);
-
-               // h1time->Fill(finter[i]->GetParameter(2 + 2 * p), 1.);
-               // h1time[i]=finter[i]->GetParameter(2 + 2 * p);
-
                h1time.push_back(finter[i]->GetParameter(2 + 2 * p) - timerefacc + corr_time_HMS / dt);
                //h1time.push_back(finter[i]->GsetParameter(2 + 2 * p));
               
@@ -934,23 +977,17 @@ chi2[bn] = tempchi2/ndf;
         for (Int_t it = 0; it < nsamp; it++)
         {
 
-          //integ[i] += signal[i][it];
-         //integtot += signal[i][it];
          integ[i] += signal[i*ntime + it];
          integtot += signal[i*ntime + it];
 
           if (it > binmin && it < binmax)
           { // cosmic pulse window
-
-            //ener[i] += signal[i][it];
-           // enertot += signal[i][it];
            ener[i] += signal[i*ntime + it];
            enertot += signal[i*ntime + it];
           }
 
           if (!(it > binmin && it < binmax))
           {
-            //bkg[i] += signal[i][it];
             bkg[i] += signal[i*ntime + it];
 
           } // background window
@@ -959,8 +996,6 @@ chi2[bn] = tempchi2/ndf;
          if (signal[i*ntime + it] > sigmax[i])
           {
             time[i] = it;
-           // sigmax[i] = signal[i][it];
-            //ampl[i] = signal[i][it];
             sigmax[i] = signal[i*ntime + it];
             ampl[i] = signal[i*ntime + it];
 
@@ -977,7 +1012,6 @@ chi2[bn] = tempchi2/ndf;
 
           if (!(it > binmin && it < binmax))
           {
-            //noise[i] += (signal[i][it] - bkg[i]) * (signal[i][it] - bkg[i]) / (nsamp - (binmax - binmin - 1));
             noise[i] += (signal[i*ntime+it] - bkg[i]) * (signal[i*ntime+it] - bkg[i]) / (nsamp - (binmax - binmin - 1));
           } // RMS of the bkg
         }
@@ -1058,6 +1092,155 @@ if((int)evt % 1000 == 0){
       
     //end of diagnostic snippet 
 */
+
+////////temp plotting on single thread
+// Only produce the PDF if this event is one you care about:
+  // Build a canvas and divide it into (ncol × nlin) pads:
+  // 1) build a list of blocks with ≥1 fitted pulse
+// … assume `wfnpulse`, `wftime`, `finter`, `signal`, `timeref`, `cortime`, `corr_time_HMS`, etc. are all filled already …
+
+// 1) collect exactly those blocks that had ≥1 peak:
+std::vector<int> activeBlocks;
+for (int bn = 0; bn < nblocks; ++bn) {
+  if (wfnpulse[bn] > 0 && finter[bn]) {
+    activeBlocks.push_back(bn);
+  }
+}
+
+if (activeBlocks.empty()) {
+  std::cout << "[evt=" << evt << "] no fitted pulses found → skipping PDF.\n";
+} else {
+  int Nactive = activeBlocks.size();
+  int ncol_small = std::ceil(std::sqrt(double(Nactive)));
+  int nrow_small = std::ceil(double(Nactive)/double(ncol_small));
+
+  // Make a canvas sized so each pad is ~300×300 pixels
+  TCanvas* c1 = new TCanvas("c1","Fits for event", ncol_small*300, nrow_small*300);
+  c1->Divide(ncol_small, nrow_small, 0.001, 0.001);
+  gStyle->SetOptStat(0);
+
+  // Keep pointers so we can delete them after printing:
+  std::vector<TH1F*> keepHistos;
+  keepHistos.reserve(Nactive);
+
+  for (int idx = 0; idx < Nactive; ++idx) {
+    int bn = activeBlocks[idx];
+    int padIndex = idx + 1;   // pads are 1–based
+    c1->cd(padIndex);
+
+    // Debug print:
+    std::cout << "[evt=" << evt << "] drawing block " << bn
+              << "  wfnpulse=" << wfnpulse[bn] 
+              << "  TF1_ptr=" << (void*)finter[bn].get() << "\n";
+
+    // 2) build a histogram for the raw waveform of block `bn`
+    TH1F* hraw = new TH1F(
+      Form("hraw_evt%.0f_blk%03d", evt, bn),
+      Form("Block %d (evt=%.0f)", bn, evt),
+      ntime, 0.0, double(ntime)
+    );
+    for (int it = 0; it < ntime; ++it) {
+      hraw->SetBinContent(it+1, signal[bn*ntime + it]);
+    }
+    hraw->SetLineColor(kBlack);
+    hraw->Draw("hist");
+    hraw->SetMinimum(hraw->GetMinimum() * 1.1 - 1.0);
+hraw->SetMaximum(hraw->GetMaximum() * 1.1 + 1.0);
+gPad->Update();
+    keepHistos.push_back(hraw);
+
+    // 3) overlay the TF1 fit, but force the visible x‐range to [0, ntime]:
+    if (finter[bn]) {
+      // make sure it has at least one free parameter (otherwise it's “flat”)
+      if (finter[bn]->GetNpar() > 1) {
+            // If the seed amplitude is too small, bump it up to 2.0
+            Double_t ampSeed = finter[bn]->GetParameter(3);
+            cout<<"fit params: ";
+            for (int ip = 0; ip < finter[bn]->GetNpar(); ++ip) {
+              cout<<finter[bn]->GetParameter(ip)<<" , ";
+            }
+            cout<<endl;
+
+ 
+        finter[bn]->SetLineColor(kBlue);
+        finter[bn]->SetLineWidth(2);
+        // restrict the drawing range to [0..ntime]:
+        finter[bn]->SetRange(0.0, double(ntime));
+        finter[bn]->Draw("same");
+      } else {
+        std::cout << "  → TF1["<<bn<<"] exists but has <=1 par ⇒ nothing to draw\n";
+      }
+    } else {
+      std::cout << "  → finter["<<bn<<"] is nullptr, skipping fit‐curve\n";
+    }
+
+    // 4) draw vertical red lines for each TSpectrum‐found peak
+    for (int p = 0; p < wfnpulse[bn]; ++p) {
+      Double_t t_ns = wftime[bn*maxwfpulses + p];
+      // convert that “corrected ns‐time” back to “bin index”:
+      Double_t binOff = (
+        t_ns 
+        + cortime[bn] 
+        + timerefacc * dt 
+        - corr_time_HMS
+      ) / dt
+      + timeref[bn];
+
+      // Debug: print out each candidate binOff
+      std::cout << "    → peak["<<p<<"] t_ns="<<t_ns 
+                << " ⇒ binOff="<<binOff << "\n";
+
+      // Now draw a TLine at x=binOff
+      if (binOff >= 0.0 && binOff <= ntime) {
+        Double_t ylo = hraw->GetMinimum();
+Double_t yhi = hraw->GetMaximum();
+if (yhi <= ylo) {
+  // If flat, give yourself a small nonzero range so the vertical line is visible:
+  ylo = 0;
+  yhi = ylo + 1;
+}
+TLine ln(binOff, ylo, binOff, yhi);
+ln.SetLineColor(kRed);
+ln.SetLineStyle(2);
+ln.DrawClone("same");
+//TLine *ln = new TLine(binOff, ylo, binOff, yhi);
+
+
+       // ln->SetLineColor(kRed);
+        //ln->SetLineStyle(2);
+       // ln->Draw("same");
+      } else {
+        std::cout << "       (binOff out of range [0,"
+                  << ntime << "], skipping)\n";
+      }
+    } // end loop over peaks
+
+    // 5) label the pad with block index
+    TLatex tex;
+    tex.SetNDC();
+    tex.SetTextSize(0.04);
+    tex.SetTextColor(kBlue);
+    tex.DrawLatex(0.02, 0.90, Form("blk %d", bn));
+
+    // leave hraw alive until after we print the canvas…
+  } // end for each active `bn`
+
+  // 6) finally update+print the canvas to a single‐page PDF
+  c1->Update();
+  TString pdfName = Form("figures/fits_run%d_evt%.0f.pdf", run, evt);
+  c1->Print(pdfName);
+
+  // 7) clean up
+  for (auto h : keepHistos) {
+    delete h;
+  }
+  delete c1;
+} // end if(activeBlocks non‐empty)
+
+
+///////// end plotting
+
+
 
 
 
