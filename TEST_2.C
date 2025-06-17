@@ -66,7 +66,7 @@ const int mfwidth = mfleft + mfright + 1; // width of the refwf used as a filter
 const int mfstart = 10;                   // Search for peaks in the wf between bins mfstart and mfend (4ns units)
 const int mfend = 100;                    // Search for peaks in the wf between bins mfstart and mfend (4ns units)
 const double specthres = 0.02;            // peaks with amplitude less than specthres*highest_peak are discarded when TSpectrum::Search() is called
-const double mfthres = 1.;               // peaks with amplitude less than mfthres in the mf of the wf are discarded
+const double mfthres = 1.5;               // peaks with amplitude less than mfthres in the mf of the wf are discarded
 const double trig_thres = 10;             // threshold (mV) on sum of 3x3 wf to allow the fit of the central wf
 const int coinc_width = 20;               // (4ns units) the trig_thres will be applied on sum of 3x3 wf in the region {expected coinc time +/- coinc_width} instead of all wf range
 Double_t mfyref[nblocks][mfwidth];        // part of the refwf that will be used in the MF
@@ -166,18 +166,57 @@ void FindPulsesMF(int                                  bn,
    // const Int_t npeaks = spec.Search(mfVals.data(), ntime,2, "nobackground", specthres);
 
     // 1) Create a small TH1F of length ntime:
-    /*
-std::unique_ptr<TH1F> hMF(new TH1F("hMF", "MF values", ntime, 0, ntime));
+<<<<<<< HEAD
+TString hname = Form("hMF_blk%d_thr%ld", bn, (long)std::hash<std::thread::id>{}(std::this_thread::get_id()));
+std::unique_ptr<TH1F> hMF(new TH1F(hname, hname, ntime, 0, ntime));
 for (int i = 0; i < ntime; ++i) {
   //why did we shift by1
   hMF->SetBinContent(i + 1, mfVals[i]);
 }
-*/
 // 2) Now call TSpectrum::Search(const TH1*, …):
 TSpectrum spec(maxwfpulses);
 //Int_t npeaks = spec.Search(hMF.get(), 2, "nobackground", specthres);
+Int_t npeaks = spec.Search(hMF.get(), 2, "nobackground,nodraw", specthres);
+
+/*
+
 std::array<Double_t, ntime> workBuf;  // must be same length
-Int_t npeaks = spec.SearchHighRes(mfVals.data(), workBuf.data(), ntime,2.0,specthres,false,1,false,0);
+std::array<Double_t, ntime> scratchBuf;
+for (int i = 2; i < ntime - 2; ++i) {
+  workBuf[i] = (mfVals[i - 2] + mfVals[i - 1] + mfVals[i] + mfVals[i + 1] + mfVals[i + 2]) / 5.0;
+}
+workBuf[0] = mfVals[0];
+workBuf[1] = mfVals[1];
+workBuf[ntime - 2] = mfVals[ntime - 2];
+workBuf[ntime - 1] = mfVals[ntime - 1];
+if(bn==393){
+  TGraph* gRaw = new TGraph(ntime);
+TGraph* gSmooth = new TGraph(ntime);
+for (int i = 0; i < ntime; ++i) {
+  gRaw->SetPoint(i, i, mfVals[i]);
+  gSmooth->SetPoint(i, i, workBuf[i]);
+}
+gRaw->SetLineColor(kBlack);
+gSmooth->SetLineColor(kBlue);
+gRaw->Draw("AL");
+gSmooth->Draw("L SAME");
+}
+double maxVal = *std::max_element(workBuf.begin(), workBuf.end());
+std::cout << "Max smoothed amp: " << maxVal << ", threshold cut: " << specthres * maxVal << "\n";
+
+
+Int_t npeaks = spec.SearchHighRes(workBuf.data(),scratchBuf.data(), ntime,1.0,specthres,false,0,false,0);
+std::cout << "Found " << npeaks << " peaks\n";
+// Draw peak positions
+Double_t* peaks = spec.GetPositionX();
+for (int i = 0; i < npeaks; ++i) {
+  TLine* l = new TLine(peaks[i], -999, peaks[i], +999);
+  l->SetLineColor(kRed);
+  l->SetLineStyle(2);
+  l->Draw("SAME");
+}
+
+*/
 
 
 
@@ -340,7 +379,7 @@ chain.SetBranchStatus("NPS.cal.fly.adcSampPulseTimeRaw",1);
   // Define a new RDataFrame that processes only 1% of the events
   auto nEventsToProcess = nEntriesDF / 1000;
   //auto df1percent = df.Range(0, nEventsToProcess);
-  auto df1percent = df.Range(0, 5);
+  auto df1percent = df.Range(10, 50);
 
   Double_t dt = 4.;                                    // time bin (sample) width (4 ns), the total time window is then ntime*dt
   const int nslots = 1104;                             // nb maximal de slots dans tous les fADC
@@ -676,7 +715,7 @@ for(int i=0; i<20; ++i){
    pedestal += signal[bn*ntime + i];
 }
 pedestal /= 20;
-
+//cout<<"PED= "<<pedestal<<endl;
 
             finter[bn]->SetParameter(0, pedestal);
 
@@ -691,7 +730,7 @@ pedestal /= 20;
      //double err  = std::sqrt(std::abs(y * 4.096 / 2.0)) / 4.096;
      double err = Err_arr[ib];
      //temp delete!
-     err=1.0;
+     //err=1.0;
      data.Add(x, y, err);
     // cout<<x[0]<<" "<<y<<" "<<err<<endl;
    }
@@ -718,6 +757,8 @@ for (int p = 0; p < wfnpulse[bn]; ++p) {
   double seed = wfampl[bn*maxwfpulses + p];
   double lo   = seed * 0.2;
   double hi   = seed * 5.0;
+ // std::cout << "[debug] about to set param" << iA 
+ //           << " limits = [" << lo << "," << hi << "]\n";
   auto &ps = cfg.ParSettings(iA);
   //ps.SetLowerLimit(lo);
   //ps.SetUpperLimit(hi);
@@ -725,6 +766,14 @@ ps.SetLimits(seed * 0.2,    // finite lower
              seed * 5.0);   // finite upper
              ps.Fix();
 
+
+  // now immediately print what Minuit2 believes:
+ // std::cout << "[debug] param" << iA <<" "<<ps.IsFixed()
+  //          << " now has limits = ["
+   //         << (ps.HasLowerLimit() ? std::to_string(ps.LowerLimit()) : "-inf")
+    //        << ","
+     //       << (ps.HasUpperLimit() ? std::to_string(ps.UpperLimit()) : "+inf")
+      //      << "]\n";
 }
 
 
@@ -733,18 +782,25 @@ int npar2 = 1 + 2*wfnpulse[bn];
 
 for (int i = 0; i < npar2; ++i) {
   auto &ps = cfg.ParSettings(i);
-  std::cout<< "param"<<i
-    <<"  value="<< ps.Value()
-    <<"  step=" << ps.StepSize()
-    <<"  limits=["<< (ps.HasLowerLimit()?std::to_string(ps.LowerLimit()):"-inf")
-                  <<","<< (ps.HasUpperLimit()?std::to_string(ps.UpperLimit()):"+inf") <<"]"
-    << std::endl;
+ // std::cout<< "param"<<i
+  //  <<"  value="<< ps.Value()
+   // <<"  step=" << ps.StepSize()
+   // <<"  limits=["<< (ps.HasLowerLimit()?std::to_string(ps.LowerLimit()):"-inf")
+    //              <<","<< (ps.HasUpperLimit()?std::to_string(ps.UpperLimit()):"+inf") <<"]"
+   // << std::endl;
 }
 */
 
 fitter.SetFunction(wfunc, false);
 
 
+/*
+cout<<"pre-fit params: ";
+for (int ip = 0; ip < finter[bn]->GetNpar(); ++ip) {
+  cout<<finter[bn]->GetParameter(ip)<<" , ";
+}
+cout<<endl;
+*/
 bool ok = fitter.LeastSquareFit(data);
 if (ok) {
  nFitSucceeds.fetch_add(1, std::memory_order_relaxed);
@@ -768,10 +824,12 @@ std::cerr<<std::fixed<<std::setprecision(16)<<"STILL Fit failed for event "<<evt
  nFitFailures.fetch_add(1, std::memory_order_relaxed);
  for (int p = 0; p < wfnpulse[bn]; p++)
   {
+  cout<< wfampl[bn * maxwfpulses + p ]<<endl;
   wftime[bn * maxwfpulses + p ] = -1000;
-  wfampl[bn * maxwfpulses + p ] = -1000;
+  wfampl[bn * maxwfpulses + p ] = -1000; 
+  cout<< wfampl[bn * maxwfpulses + p ]<<endl;
   }
-  
+
 
 
   return;
@@ -1143,6 +1201,8 @@ if((int)evt % 1000 == 0){
   // 1) build a list of blocks with ≥1 fitted pulse
 // … assume `wfnpulse`, `wftime`, `finter`, `signal`, `timeref`, `cortime`, `corr_time_HMS`, etc. are all filled already …
 
+if(true){
+
 // 1) collect exactly those blocks that had ≥1 peak:
 if(true){
 std::vector<int> activeBlocks;
@@ -1153,7 +1213,7 @@ for (int bn = 0; bn < nblocks; ++bn) {
 }
 
 if (activeBlocks.empty()) {
-  std::cout << "[evt=" << evt << "] no fitted pulses found → skipping PDF.\n";
+  std::cout<<std::fixed << "[evt=" << evt << "] no fitted pulses found → skipping PDF.\n";
 } else {
   int Nactive = activeBlocks.size();
   int ncol_small = std::ceil(std::sqrt(double(Nactive)));
@@ -1174,9 +1234,9 @@ if (activeBlocks.empty()) {
     c1->cd(padIndex);
 
     // Debug print:
-    std::cout << "[evt=" << evt << "] drawing block " << bn
-              << "  wfnpulse=" << wfnpulse[bn] 
-              << "  TF1_ptr=" << (void*)finter[bn].get() << "\n";
+  //  std::cout << "[evt=" << evt << "] drawing block " << bn
+   //           << "  wfnpulse=" << wfnpulse[bn] 
+    //          << "  TF1_ptr=" << (void*)finter[bn].get() << "\n";
 
     // 2) build a histogram for the raw waveform of block `bn`
     TH1F* hraw = new TH1F(
@@ -1202,11 +1262,11 @@ gPad->Update();
       if (finter[bn]->GetNpar() > 1) {
             // If the seed amplitude is too small, bump it up to 2.0
             Double_t ampSeed = finter[bn]->GetParameter(3);
-            cout<<"fit params: ";
+            //cout<<"fit params: ";
             for (int ip = 0; ip < finter[bn]->GetNpar(); ++ip) {
-              cout<<finter[bn]->GetParameter(ip)<<" , ";
+             // cout<<finter[bn]->GetParameter(ip)<<" , ";
             }
-            cout<<endl;
+            //cout<<endl;
 
  
         finter[bn]->SetLineColor(kBlue);
@@ -1234,8 +1294,8 @@ gPad->Update();
       + timeref[bn];
 
       // Debug: print out each candidate binOff
-      std::cout << "    → peak["<<p<<"] t_ns="<<t_ns 
-              << " ⇒ binOff="<<binOff <<" Ampl="<<wfampl[bn*maxwfpulses + p]<< "\n";
+   //   std::cout << "    → peak["<<p<<"] t_ns="<<t_ns 
+    //            << " ⇒ binOff="<<binOff << "\n";
 
       // Now draw a TLine at x=binOff
       if (binOff >= 0.0 && binOff <= ntime) {
@@ -1288,7 +1348,7 @@ ln.DrawClone("same");
 ///////// end plotting
 
 
-
+}
 
 
 //std::cout << "evt=" << evt << ": " << nonzero << " non-empty histograms\n";
@@ -1429,4 +1489,3 @@ t.Continue();
   std::cout << "Total failed fits: " << nFitFailures.load()<<" total fits succeed:"<<nFitSucceeds.load() << "\n";
   t.Stop();
   t.Print();
-}
