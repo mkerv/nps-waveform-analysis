@@ -39,10 +39,6 @@
 #include "TSpectrum.h"
 #include "TLine.h"
 
-#include "Math/Factory.h"
-#include "Math/Minimizer.h"
-
-
 template <typename T>
 void checkType(const T &obj)
 {
@@ -68,8 +64,8 @@ const int mfright = 5;                    // end bin of the refwf used as a filt
 const int mfwidth = mfleft + mfright + 1; // width of the refwf used as a filter (4ns units)
 const int mfstart = 10;                   // Search for peaks in the wf between bins mfstart and mfend (4ns units)
 const int mfend = 100;                    // Search for peaks in the wf between bins mfstart and mfend (4ns units)
-const double specthres = 0.01;            // peaks with amplitude less than specthres*highest_peak are discarded when TSpectrum::Search() is called
-const double mfthres = 0.5;               // peaks with amplitude less than mfthres in the mf of the wf are discarded
+const double specthres = 0.02;            // peaks with amplitude less than specthres*highest_peak are discarded when TSpectrum::Search() is called
+const double mfthres = 1.5;               // peaks with amplitude less than mfthres in the mf of the wf are discarded
 const double trig_thres = 10;             // threshold (mV) on sum of 3x3 wf to allow the fit of the central wf
 const int coinc_width = 20;               // (4ns units) the trig_thres will be applied on sum of 3x3 wf in the region {expected coinc time +/- coinc_width} instead of all wf range
 Double_t mfyref[nblocks][mfwidth];        // part of the refwf that will be used in the MF
@@ -169,15 +165,19 @@ void FindPulsesMF(int                                  bn,
    // const Int_t npeaks = spec.Search(mfVals.data(), ntime,2, "nobackground", specthres);
 
     // 1) Create a small TH1F of length ntime:
+    /*
 std::unique_ptr<TH1F> hMF(new TH1F("hMF", "MF values", ntime, 0, ntime));
 for (int i = 0; i < ntime; ++i) {
   //why did we shift by1
   hMF->SetBinContent(i + 1, mfVals[i]);
 }
-
+*/
 // 2) Now call TSpectrum::Search(const TH1*, …):
 TSpectrum spec(maxwfpulses);
-Int_t npeaks = spec.Search(hMF.get(), 2, "nobackground", specthres);
+//Int_t npeaks = spec.Search(hMF.get(), 2, "nobackground", specthres);
+std::array<Double_t, ntime> workBuf;  // must be same length
+Int_t npeaks = spec.SearchHighRes(mfVals.data(), workBuf.data(), ntime,2.0,specthres,false,1,false,0);
+
 
 
 
@@ -200,7 +200,7 @@ Int_t npeaks = spec.Search(hMF.get(), 2, "nobackground", specthres);
                   << " (wfnpulse=" << wfnpulse_out << ")\n";
     }
 
-    cout<<"block "<<bn<<"  n pulses="<<wfnpulse_out<<endl;
+    //cout<<"block "<<bn<<"  n pulses="<<wfnpulse_out<<endl;
 return;
 
 }
@@ -297,7 +297,7 @@ t.Continue();
 
 
   // ENABLE MT
- // ROOT::EnableImplicitMT(nthreads);
+  ROOT::EnableImplicitMT(nthreads);
   std::cout << "Implicit MT enabled: " << ROOT::IsImplicitMTEnabled() << "\n";
   std::cout << "Number of threads: " << ROOT::GetThreadPoolSize() << "\n";
 
@@ -339,7 +339,7 @@ chain.SetBranchStatus("NPS.cal.fly.adcSampPulseTimeRaw",1);
   // Define a new RDataFrame that processes only 1% of the events
   auto nEventsToProcess = nEntriesDF / 1000;
   //auto df1percent = df.Range(0, nEventsToProcess);
-  auto df1percent = df.Range(0, 5);
+  //auto df1percent = df.Range(0, 5);
 
   Double_t dt = 4.;                                    // time bin (sample) width (4 ns), the total time window is then ntime*dt
   const int nslots = 1104;                             // nb maximal de slots dans tous les fADC
@@ -459,8 +459,8 @@ chain.SetBranchStatus("NPS.cal.fly.adcSampPulseTimeRaw",1);
      filetime.close();
 
   // Load only required branches into dataframe
-  //auto df2 = df.Define("NSampWaveForm", "Ndata.NPS.cal.fly.adcSampWaveform")
-    auto df2 = df1percent.Define("NSampWaveForm", "Ndata.NPS.cal.fly.adcSampWaveform")
+  auto df2 = df.Define("NSampWaveForm", "Ndata.NPS.cal.fly.adcSampWaveform")
+  //  auto df2 = df1percent.Define("NSampWaveForm", "Ndata.NPS.cal.fly.adcSampWaveform")
                  .Define("SampWaveForm", "NPS.cal.fly.adcSampWaveform")
                  .Define("NadcCounter", "Ndata.NPS.cal.fly.adcCounter")
                  .Define("adcCounter", "NPS.cal.fly.adcCounter")
@@ -589,7 +589,7 @@ ROOT::RVec<Double_t> wftime(nblocks * maxwfpulses, -100.0);
     // The fit function need to be moved into the scope of analyze to capture all variables (wfnpulse)
     auto Fitwf = [=,&signal, &wfnpulse, &wfampl, &finter, &wftime, &corr_time_HMS, &chi2](Double_t evt, Int_t bn, const Double_t Err_arr[])
     {
-      std::cout << ">>> Fitwf called for evt="<<evt<<" bn="<<bn<<" wfnpulse= "<<wfnpulse[bn]<<std::endl;
+     // std::cout << ">>> Fitwf called for evt="<<evt<<" bn="<<bn<<" wfnpulse= "<<wfnpulse[bn]<<std::endl;
 
   // Build a thread‐local Interpolator
   auto interpPtr = std::make_shared<ROOT::Math::Interpolator>(
@@ -607,7 +607,7 @@ ROOT::RVec<Double_t> wftime(nblocks * maxwfpulses, -100.0);
       // Clone the interpolator for this block
      // ROOT::Math::Interpolator localInterp = *interpolation[bn];
       // (this copy brings along all the precomputed spline data)
-      constexpr double AMP_SCALE = 10.0; // so scaled amplitudes run ~0–10
+      //constexpr double AMP_SCALE = 10.0; // so scaled amplitudes run ~0–10
 
 
       auto func = [interpPtr,bn,&wfnpulse] (Double_t *x, Double_t *par) mutable {
@@ -617,7 +617,7 @@ ROOT::RVec<Double_t> wftime(nblocks * maxwfpulses, -100.0);
         //  Double_t raw = x[0] - par[2 + 2*p];
         //  Double_t dt0 = std::min(std::max(raw, 0.0), double(ntime-1));
           if (dt0 > 1 && dt0 < ntime - 1) {
-            val += par[2 + 2*p]*AMP_SCALE * interpPtr->Eval(dt0);
+            val += par[2 + 2*p]* interpPtr->Eval(dt0);
           }
         }
         return val;
@@ -660,8 +660,8 @@ ROOT::RVec<Double_t> wftime(nblocks * maxwfpulses, -100.0);
           finter[bn]->ReleaseParameter(1 + 2 * p);
           finter[bn]->ReleaseParameter(2 + 2 * p); 
           finter[bn]->SetParameter(1 + 2 * p, wftime[bn * maxwfpulses + p ]-timeref[bn]);   
-          finter[bn]->SetParameter(2 + 2 * p, wfampl[bn * maxwfpulses + p ]/AMP_SCALE);
-          finter[bn]->FixParameter(2 + 2 * p, wfampl[bn * maxwfpulses + p ]/AMP_SCALE);
+          finter[bn]->SetParameter(2 + 2 * p, wfampl[bn * maxwfpulses + p ]);
+          finter[bn]->FixParameter(2 + 2 * p, wfampl[bn * maxwfpulses + p ]);
         //  finter[bn]->SetParLimits(1 + 2 * p, wftime[bn * maxwfpulses + p ]-timeref[bn] - 4, wftime[bn * maxwfpulses + p ]-timeref[bn] + 4);
          // finter[bn]->SetParLimits(2 + 2 * p, wfampl[bn * maxwfpulses + p ]/AMP_SCALE * 0.2, wfampl[bn * maxwfpulses + p ]/AMP_SCALE * 5);   
 
@@ -673,10 +673,9 @@ ROOT::RVec<Double_t> wftime(nblocks * maxwfpulses, -100.0);
       double pedestal = 0;
 for(int i=0; i<20; ++i){
    pedestal += signal[bn*ntime + i];
-  cout<<"PED= "<<pedestal<<"  i" <<i<<"value"<<signal[bn*ntime + i]<<endl;
 }
 pedestal /= 20;
-cout<<"PED= "<<pedestal<<endl;
+
 
             finter[bn]->SetParameter(0, pedestal);
 
@@ -693,7 +692,7 @@ cout<<"PED= "<<pedestal<<endl;
      //temp delete!
      err=1.0;
      data.Add(x, y, err);
-     cout<<x[0]<<" "<<y<<" "<<err<<endl;
+    // cout<<x[0]<<" "<<y<<" "<<err<<endl;
    }
 
 
@@ -709,17 +708,15 @@ cfg.SetMinimizer("Minuit2", "Migrad");
 //auto &mopts = fitter.Config().Mi  nimizerOptions();
 auto &mopts = cfg.MinimizerOptions();
 mopts.SetStrategy(1);
-mopts.SetPrintLevel(3);
+mopts.SetPrintLevel(0);
 mopts.SetMaxIterations(1000);
 cfg.CreateParamsSettings(wfunc);
 
 for (int p = 0; p < wfnpulse[bn]; ++p) {
   int iA   = 2 + 2*p;
-  double seed = wfampl[bn*maxwfpulses + p] / AMP_SCALE;
+  double seed = wfampl[bn*maxwfpulses + p];
   double lo   = seed * 0.2;
   double hi   = seed * 5.0;
-  std::cout << "[debug] about to set param" << iA 
-            << " limits = [" << lo << "," << hi << "]\n";
   auto &ps = cfg.ParSettings(iA);
   //ps.SetLowerLimit(lo);
   //ps.SetUpperLimit(hi);
@@ -727,17 +724,10 @@ ps.SetLimits(seed * 0.2,    // finite lower
              seed * 5.0);   // finite upper
              ps.Fix();
 
-  // now immediately print what Minuit2 believes:
-  std::cout << "[debug] param" << iA <<" "<<ps.IsFixed()
-            << " now has limits = ["
-            << (ps.HasLowerLimit() ? std::to_string(ps.LowerLimit()) : "-inf")
-            << ","
-            << (ps.HasUpperLimit() ? std::to_string(ps.UpperLimit()) : "+inf")
-            << "]\n";
 }
 
 
-
+/*
 int npar2 = 1 + 2*wfnpulse[bn];
 
 for (int i = 0; i < npar2; ++i) {
@@ -749,20 +739,14 @@ for (int i = 0; i < npar2; ++i) {
                   <<","<< (ps.HasUpperLimit()?std::to_string(ps.UpperLimit()):"+inf") <<"]"
     << std::endl;
 }
-
+*/
 
 fitter.SetFunction(wfunc, false);
 
 
-cout<<"pre-fit params: ";
-for (int ip = 0; ip < finter[bn]->GetNpar(); ++ip) {
-  cout<<finter[bn]->GetParameter(ip)<<" , ";
-}
-cout<<endl;
-
 bool ok = fitter.LeastSquareFit(data);
 if (!ok) {
-  std::cerr<<"Failed once for event "<<evt<<", block "<<bn<<"\n";
+ // std::cerr<<"Failed once for event "<<evt<<", block "<<bn<<"\n";
 }
   
 if (!ok) {
@@ -774,7 +758,7 @@ if (!ok) {
   ok = fitter.LeastSquareFit(data);
 }
 if (!ok) {
-  std::cerr<<"STILL Fit failed for event "<<evt<<", block "<<bn<<"\n";
+ // std::cerr<<"STILL Fit failed for event "<<evt<<", block "<<bn<<"\n";
  //failcount++;
  nFitFailures.fetch_add(1, std::memory_order_relaxed);
  for (int p = 0; p < wfnpulse[bn]; p++)
@@ -806,12 +790,12 @@ auto &result = fitter.Result();
         double corrTime = uncorTime + (corr_time_HMS - cortime[bn]);
     
         // 5) amplitude
-        wfampl[bn * maxwfpulses + p ] = result.Parameter(2 + 2*p)*AMP_SCALE;
+        wfampl[bn * maxwfpulses + p ] = result.Parameter(2 + 2*p);
         wftime[bn * maxwfpulses + p ]  = binOff*dt                     // convert bins → ns
                    + corr_time_HMS                // add HMS correction
                    - cortime[bn]                  // subtract block‐by‐block cable delay
                    - timerefacc*dt;               // subtract your reference‐time offset
-        cout<< wfampl[bn * maxwfpulses + p ]<<"   +  "<<binOff<<endl;
+       // cout<< wfampl[bn * maxwfpulses + p ]<<"   +  "<<binOff<<endl;
     }
   unsigned npar = result.NPar();
   for(unsigned ip=0; ip<npar; ++ip) {
@@ -966,7 +950,7 @@ bool okToFit = PassClusterThreshold(i,signal.data(),pres,ncol,nlin,nblocks,ntime
 
 
 if (okToFit) {
-  cout<<evt<<" passed cluster threshold for block "<<i<<endl;
+ // cout<<evt<<" passed cluster threshold for block "<<i<<endl;
   Fitwf(evt, i, Err.data());
   if (finter[i]) {
     finter[i]->SetLineColor(kBlue);
@@ -1155,6 +1139,7 @@ if((int)evt % 1000 == 0){
 // … assume `wfnpulse`, `wftime`, `finter`, `signal`, `timeref`, `cortime`, `corr_time_HMS`, etc. are all filled already …
 
 // 1) collect exactly those blocks that had ≥1 peak:
+if(false){
 std::vector<int> activeBlocks;
 for (int bn = 0; bn < nblocks; ++bn) {
   if (wfnpulse[bn] > 0 && finter[bn]) {
@@ -1201,6 +1186,8 @@ if (activeBlocks.empty()) {
     hraw->Draw("hist");
     hraw->SetMinimum(hraw->GetMinimum() * 1.1 - 1.0);
 hraw->SetMaximum(hraw->GetMaximum() * 1.1 + 1.0);
+
+
 gPad->Update();
     keepHistos.push_back(hraw);
 
@@ -1243,7 +1230,7 @@ gPad->Update();
 
       // Debug: print out each candidate binOff
       std::cout << "    → peak["<<p<<"] t_ns="<<t_ns 
-                << " ⇒ binOff="<<binOff << "\n";
+              << " ⇒ binOff="<<binOff <<" Ampl="<<wfampl[bn*maxwfpulses + p]<< "\n";
 
       // Now draw a TLine at x=binOff
       if (binOff >= 0.0 && binOff <= ntime) {
@@ -1292,7 +1279,7 @@ ln.DrawClone("same");
   delete c1;
 } // end if(activeBlocks non‐empty)
 
-
+}//if for plotting
 ///////// end plotting
 
 
