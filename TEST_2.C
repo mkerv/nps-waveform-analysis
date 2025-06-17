@@ -56,6 +56,7 @@ const int nsignals = nblocks * maxpulses;
 const int maxwfpulses = 12; // nb maximal de pulses que la wfa peut trouver
 const int ntemp = 56;       // nb of temp sensors
 std::atomic<int> nFitFailures{0};
+std::atomic<int> nFitSucceeds{0};
 
 
 // Matched Filter constants
@@ -65,7 +66,7 @@ const int mfwidth = mfleft + mfright + 1; // width of the refwf used as a filter
 const int mfstart = 10;                   // Search for peaks in the wf between bins mfstart and mfend (4ns units)
 const int mfend = 100;                    // Search for peaks in the wf between bins mfstart and mfend (4ns units)
 const double specthres = 0.02;            // peaks with amplitude less than specthres*highest_peak are discarded when TSpectrum::Search() is called
-const double mfthres = 1.5;               // peaks with amplitude less than mfthres in the mf of the wf are discarded
+const double mfthres = 1.;               // peaks with amplitude less than mfthres in the mf of the wf are discarded
 const double trig_thres = 10;             // threshold (mV) on sum of 3x3 wf to allow the fit of the central wf
 const int coinc_width = 20;               // (4ns units) the trig_thres will be applied on sum of 3x3 wf in the region {expected coinc time +/- coinc_width} instead of all wf range
 Double_t mfyref[nblocks][mfwidth];        // part of the refwf that will be used in the MF
@@ -297,7 +298,7 @@ t.Continue();
 
 
   // ENABLE MT
-  ROOT::EnableImplicitMT(nthreads);
+//  ROOT::EnableImplicitMT(nthreads);
   std::cout << "Implicit MT enabled: " << ROOT::IsImplicitMTEnabled() << "\n";
   std::cout << "Number of threads: " << ROOT::GetThreadPoolSize() << "\n";
 
@@ -339,7 +340,7 @@ chain.SetBranchStatus("NPS.cal.fly.adcSampPulseTimeRaw",1);
   // Define a new RDataFrame that processes only 1% of the events
   auto nEventsToProcess = nEntriesDF / 1000;
   //auto df1percent = df.Range(0, nEventsToProcess);
-  //auto df1percent = df.Range(0, 5);
+  auto df1percent = df.Range(0, 5);
 
   Double_t dt = 4.;                                    // time bin (sample) width (4 ns), the total time window is then ntime*dt
   const int nslots = 1104;                             // nb maximal de slots dans tous les fADC
@@ -459,8 +460,8 @@ chain.SetBranchStatus("NPS.cal.fly.adcSampPulseTimeRaw",1);
      filetime.close();
 
   // Load only required branches into dataframe
-  auto df2 = df.Define("NSampWaveForm", "Ndata.NPS.cal.fly.adcSampWaveform")
-  //  auto df2 = df1percent.Define("NSampWaveForm", "Ndata.NPS.cal.fly.adcSampWaveform")
+//  auto df2 = df.Define("NSampWaveForm", "Ndata.NPS.cal.fly.adcSampWaveform")
+    auto df2 = df1percent.Define("NSampWaveForm", "Ndata.NPS.cal.fly.adcSampWaveform")
                  .Define("SampWaveForm", "NPS.cal.fly.adcSampWaveform")
                  .Define("NadcCounter", "Ndata.NPS.cal.fly.adcCounter")
                  .Define("adcCounter", "NPS.cal.fly.adcCounter")
@@ -530,7 +531,7 @@ timerefacc = (calodist - 9.5) / (3.e8 * 1.e-9 * 4);
   ////////Lambda funtion for the per-event wf analysis/////////
   auto analyze = [=](Int_t NSampWaveForm, const ROOT::VecOps::RVec<Double_t> &SampWaveForm, Double_t evt, Int_t NadcCounter, ROOT::VecOps::RVec<Double_t> &adcCounter, const ROOT::VecOps::RVec<Double_t> adcSampPulseTime, const ROOT::VecOps::RVec<Double_t> adcSampPulseTimeRaw, const ROOT::VecOps::RVec<Double_t> adcSampPulseAmp, const ROOT::VecOps::RVec<Double_t> adcSampPulseInt, const ROOT::VecOps::RVec<Double_t> adcSampPulsePed)
   {
-    
+  bool fitFailed=false;  
 
   TStopwatch tlambda;
   tlambda.Start();
@@ -587,7 +588,7 @@ ROOT::RVec<Double_t> wftime(nblocks * maxwfpulses, -100.0);
     Int_t binmax;
 
     // The fit function need to be moved into the scope of analyze to capture all variables (wfnpulse)
-    auto Fitwf = [=,&signal, &wfnpulse, &wfampl, &finter, &wftime, &corr_time_HMS, &chi2](Double_t evt, Int_t bn, const Double_t Err_arr[])
+    auto Fitwf = [=,&fitFailed,&signal, &wfnpulse, &wfampl, &finter, &wftime, &corr_time_HMS, &chi2](Double_t evt, Int_t bn, const Double_t Err_arr[])
     {
      // std::cout << ">>> Fitwf called for evt="<<evt<<" bn="<<bn<<" wfnpulse= "<<wfnpulse[bn]<<std::endl;
 
@@ -745,21 +746,25 @@ fitter.SetFunction(wfunc, false);
 
 
 bool ok = fitter.LeastSquareFit(data);
-if (!ok) {
- // std::cerr<<"Failed once for event "<<evt<<", block "<<bn<<"\n";
+if (ok) {
+ nFitSucceeds.fetch_add(1, std::memory_order_relaxed);
 }
   
 if (!ok) {
   // retry just this one with a tougher configuration
- // cout<<"FAILED Again, retry"<<endl;
+  cout<<"FAILED Again, retry"<<endl;
   cfg.MinimizerOptions().SetStrategy(2);
  // mopts.SetPrintLevel(1);
   cfg.MinimizerOptions().SetMaxIterations(5000);
   ok = fitter.LeastSquareFit(data);
+if (ok) {
+ nFitSucceeds.fetch_add(1, std::memory_order_relaxed);
+}
 }
 if (!ok) {
- // std::cerr<<"STILL Fit failed for event "<<evt<<", block "<<bn<<"\n";
+std::cerr<<std::fixed<<std::setprecision(16)<<"STILL Fit failed for event "<<evt<<", block "<<bn<<"\n";
  //failcount++;
+ fitFailed=true;
  nFitFailures.fetch_add(1, std::memory_order_relaxed);
  for (int p = 0; p < wfnpulse[bn]; p++)
   {
@@ -1139,7 +1144,7 @@ if((int)evt % 1000 == 0){
 // … assume `wfnpulse`, `wftime`, `finter`, `signal`, `timeref`, `cortime`, `corr_time_HMS`, etc. are all filled already …
 
 // 1) collect exactly those blocks that had ≥1 peak:
-if(false){
+if(true){
 std::vector<int> activeBlocks;
 for (int bn = 0; bn < nblocks; ++bn) {
   if (wfnpulse[bn] > 0 && finter[bn]) {
@@ -1421,7 +1426,7 @@ t.Continue();
  
   cout << "fin de l'analyse" << endl;
   //cout << "Failed fits: "<<failcount<<endl;
-  std::cout << "Total failed fits: " << nFitFailures.load() << "\n";
+  std::cout << "Total failed fits: " << nFitFailures.load()<<" total fits succeed:"<<nFitSucceeds.load() << "\n";
   t.Stop();
   t.Print();
 }
