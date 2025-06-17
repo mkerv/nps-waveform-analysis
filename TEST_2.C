@@ -39,6 +39,9 @@
 #include "TSpectrum.h"
 #include "TLine.h"
 
+#include "Math/Factory.h"
+#include "Math/Minimizer.h"
+
 
 template <typename T>
 void checkType(const T &obj)
@@ -584,7 +587,7 @@ ROOT::RVec<Double_t> wftime(nblocks * maxwfpulses, -100.0);
     Int_t binmax;
 
     // The fit function need to be moved into the scope of analyze to capture all variables (wfnpulse)
-    auto Fitwf = [=, &wfnpulse, &wfampl, &finter, &wftime, &corr_time_HMS, &chi2](Double_t evt, Int_t bn, const Double_t Err_arr[])
+    auto Fitwf = [=,&signal, &wfnpulse, &wfampl, &finter, &wftime, &corr_time_HMS, &chi2](Double_t evt, Int_t bn, const Double_t Err_arr[])
     {
       std::cout << ">>> Fitwf called for evt="<<evt<<" bn="<<bn<<" wfnpulse= "<<wfnpulse[bn]<<std::endl;
 
@@ -604,28 +607,27 @@ ROOT::RVec<Double_t> wftime(nblocks * maxwfpulses, -100.0);
       // Clone the interpolator for this block
      // ROOT::Math::Interpolator localInterp = *interpolation[bn];
       // (this copy brings along all the precomputed spline data)
+      constexpr double AMP_SCALE = 10.0; // so scaled amplitudes run ~0–10
 
 
-      auto func = [interpPtr] (Double_t *x, Double_t *par) mutable {
-        Int_t j = Int_t(par[0]); // block index
-        Double_t val = 0;
-        for (Int_t p = 0; p < maxwfpulses; ++p) {
-         Double_t dt0 = x[0] - par[2 + 2*p];
+      auto func = [interpPtr,bn,&wfnpulse] (Double_t *x, Double_t *par) mutable {
+        Double_t val = par[0];
+        for (Int_t p = 0; p < wfnpulse[bn]; ++p) {
+         Double_t dt0 = x[0] - par[1 + 2*p];
         //  Double_t raw = x[0] - par[2 + 2*p];
         //  Double_t dt0 = std::min(std::max(raw, 0.0), double(ntime-1));
           if (dt0 > 1 && dt0 < ntime - 1) {
-            val += par[3 + 2*p] * interpPtr->Eval(dt0);
+            val += par[2 + 2*p]*AMP_SCALE * interpPtr->Eval(dt0);
           }
         }
-        return val + par[1];
+        return val;
       };
 
 
       std::string fname = Form("finter_bn%d_ptr%p_evt%.0f", bn, (void*)finter[bn].get(), evt);
      // finter[bn] = std::make_unique<TF1>(fname.c_str(), func, -200, ntime + 200, nbparameters);
-      finter[bn] = std::make_unique<TF1>(fname.c_str(), func, -200, ntime + 200, wfnpulse[bn]*2+2);
+      finter[bn] = std::make_unique<TF1>(fname.c_str(), func, -200, ntime + 200, wfnpulse[bn]*2+1);
 
-      finter[bn]->FixParameter(0, bn);
       finter[bn]->SetNpx(1100);
 
    
@@ -655,18 +657,28 @@ ROOT::RVec<Double_t> wftime(nblocks * maxwfpulses, -100.0);
       {
         for (Int_t p = 0; p < TMath::Min(maxwfpulses, wfnpulse[bn]); p++)
         {
-          finter[bn]->ReleaseParameter(2 + 2 * p);
-          finter[bn]->ReleaseParameter(3 + 2 * p); 
-          finter[bn]->SetParameter(2 + 2 * p, wftime[bn * maxwfpulses + p ]- timeref[bn]);   
-          finter[bn]->SetParameter(3 + 2 * p, wfampl[bn * maxwfpulses + p ]);
-          finter[bn]->SetParLimits(2 + 2 * p, wftime[bn * maxwfpulses + p ]- timeref[bn] - 4, wftime[bn * maxwfpulses + p ]- timeref[bn] + 4);
-          finter[bn]->SetParLimits(3 + 2 * p, wfampl[bn * maxwfpulses + p ] * 0.2, wfampl[bn * maxwfpulses + p ] * 5);   
+          finter[bn]->ReleaseParameter(1 + 2 * p);
+          finter[bn]->ReleaseParameter(2 + 2 * p); 
+          finter[bn]->SetParameter(1 + 2 * p, wftime[bn * maxwfpulses + p ]-timeref[bn]);   
+          finter[bn]->SetParameter(2 + 2 * p, wfampl[bn * maxwfpulses + p ]/AMP_SCALE);
+          finter[bn]->FixParameter(2 + 2 * p, wfampl[bn * maxwfpulses + p ]/AMP_SCALE);
+        //  finter[bn]->SetParLimits(1 + 2 * p, wftime[bn * maxwfpulses + p ]-timeref[bn] - 4, wftime[bn * maxwfpulses + p ]-timeref[bn] + 4);
+         // finter[bn]->SetParLimits(2 + 2 * p, wfampl[bn * maxwfpulses + p ]/AMP_SCALE * 0.2, wfampl[bn * maxwfpulses + p ]/AMP_SCALE * 5);   
 
         }
       }
 
-      finter[bn]->SetParameter(1, 0.);
-      finter[bn]->SetParLimits(1, -100, 100.);
+      finter[bn]->SetParameter(0, 0.);
+      finter[bn]->SetParLimits(0, -100, 100.);
+      double pedestal = 0;
+for(int i=0; i<20; ++i){
+   pedestal += signal[bn*ntime + i];
+  cout<<"PED= "<<pedestal<<"  i" <<i<<"value"<<signal[bn*ntime + i]<<endl;
+}
+pedestal /= 20;
+cout<<"PED= "<<pedestal<<endl;
+
+            finter[bn]->SetParameter(0, pedestal);
 
 
 
@@ -681,6 +693,7 @@ ROOT::RVec<Double_t> wftime(nblocks * maxwfpulses, -100.0);
      //temp delete!
      err=1.0;
      data.Add(x, y, err);
+     cout<<x[0]<<" "<<y<<" "<<err<<endl;
    }
 
 
@@ -692,19 +705,60 @@ auto &cfg = fitter.Config();
 //fitter.Config().SetMinimizer("Minuit2", "Migrad");
 cfg.SetMinimizer("Minuit2", "Migrad");
 //cfg.SetMinimizer("Minuit2", "MINIMIZE");
-//auto &mopts = fitter.Config().MinimizerOptions();
+//cfg.SetMinimizer("Fumili",""); 
+//auto &mopts = fitter.Config().Mi  nimizerOptions();
 auto &mopts = cfg.MinimizerOptions();
-mopts.SetStrategy(0);
-mopts.SetPrintLevel(1);
+mopts.SetStrategy(1);
+mopts.SetPrintLevel(3);
 mopts.SetMaxIterations(1000);
+cfg.CreateParamsSettings(wfunc);
+
+for (int p = 0; p < wfnpulse[bn]; ++p) {
+  int iA   = 2 + 2*p;
+  double seed = wfampl[bn*maxwfpulses + p] / AMP_SCALE;
+  double lo   = seed * 0.2;
+  double hi   = seed * 5.0;
+  std::cout << "[debug] about to set param" << iA 
+            << " limits = [" << lo << "," << hi << "]\n";
+  auto &ps = cfg.ParSettings(iA);
+  //ps.SetLowerLimit(lo);
+  //ps.SetUpperLimit(hi);
+ps.SetLimits(seed * 0.2,    // finite lower
+             seed * 5.0);   // finite upper
+             ps.Fix();
+
+  // now immediately print what Minuit2 believes:
+  std::cout << "[debug] param" << iA <<" "<<ps.IsFixed()
+            << " now has limits = ["
+            << (ps.HasLowerLimit() ? std::to_string(ps.LowerLimit()) : "-inf")
+            << ","
+            << (ps.HasUpperLimit() ? std::to_string(ps.UpperLimit()) : "+inf")
+            << "]\n";
+}
+
+
+
+int npar2 = 1 + 2*wfnpulse[bn];
+
+for (int i = 0; i < npar2; ++i) {
+  auto &ps = cfg.ParSettings(i);
+  std::cout<< "param"<<i
+    <<"  value="<< ps.Value()
+    <<"  step=" << ps.StepSize()
+    <<"  limits=["<< (ps.HasLowerLimit()?std::to_string(ps.LowerLimit()):"-inf")
+                  <<","<< (ps.HasUpperLimit()?std::to_string(ps.UpperLimit()):"+inf") <<"]"
+    << std::endl;
+}
+
+
 fitter.SetFunction(wfunc, false);
+
 
 cout<<"pre-fit params: ";
 for (int ip = 0; ip < finter[bn]->GetNpar(); ++ip) {
   cout<<finter[bn]->GetParameter(ip)<<" , ";
 }
 cout<<endl;
-
 
 bool ok = fitter.LeastSquareFit(data);
 if (!ok) {
@@ -730,6 +784,7 @@ if (!ok) {
   }
   
 
+
   return;
 }
 
@@ -738,7 +793,7 @@ auto &result = fitter.Result();
 
       for (Int_t p = 0; p < wfnpulse[bn]; ++p) {
         // 1) the fitted bin shift (same units your x[] was in)
-        double binOff = result.Parameter(2 + 2*p);
+        double binOff = result.Parameter(1 + 2*p);
     
     
         // 2) what bin *would* that be in the original histogram?
@@ -751,7 +806,7 @@ auto &result = fitter.Result();
         double corrTime = uncorTime + (corr_time_HMS - cortime[bn]);
     
         // 5) amplitude
-        wfampl[bn * maxwfpulses + p ] = result.Parameter(3 + 2*p);
+        wfampl[bn * maxwfpulses + p ] = result.Parameter(2 + 2*p)*AMP_SCALE;
         wftime[bn * maxwfpulses + p ]  = binOff*dt                     // convert bins → ns
                    + corr_time_HMS                // add HMS correction
                    - cortime[bn]                  // subtract block‐by‐block cable delay
@@ -939,7 +994,7 @@ else {
               
 
                h2time.push_back(wftime[i * maxwfpulses + p ]);
-               h1time.push_back(finter[i]->GetParameter(2 + 2 * p) - timerefacc + corr_time_HMS / dt);
+               h1time.push_back(finter[i]->GetParameter(1 + 2 * p) - timerefacc + corr_time_HMS / dt);
                //h1time.push_back(finter[i]->GsetParameter(2 + 2 * p));
               
             } // Fill the time spectrums
