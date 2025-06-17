@@ -166,7 +166,6 @@ void FindPulsesMF(int                                  bn,
    // const Int_t npeaks = spec.Search(mfVals.data(), ntime,2, "nobackground", specthres);
 
     // 1) Create a small TH1F of length ntime:
-<<<<<<< HEAD
 TString hname = Form("hMF_blk%d_thr%ld", bn, (long)std::hash<std::thread::id>{}(std::this_thread::get_id()));
 std::unique_ptr<TH1F> hMF(new TH1F(hname, hname, ntime, 0, ntime));
 for (int i = 0; i < ntime; ++i) {
@@ -701,7 +700,7 @@ ROOT::RVec<Double_t> wftime(nblocks * maxwfpulses, -100.0);
           finter[bn]->ReleaseParameter(2 + 2 * p); 
           finter[bn]->SetParameter(1 + 2 * p, wftime[bn * maxwfpulses + p ]-timeref[bn]);   
           finter[bn]->SetParameter(2 + 2 * p, wfampl[bn * maxwfpulses + p ]);
-          finter[bn]->FixParameter(2 + 2 * p, wfampl[bn * maxwfpulses + p ]);
+       //   finter[bn]->FixParameter(2 + 2 * p, wfampl[bn * maxwfpulses + p ]);
         //  finter[bn]->SetParLimits(1 + 2 * p, wftime[bn * maxwfpulses + p ]-timeref[bn] - 4, wftime[bn * maxwfpulses + p ]-timeref[bn] + 4);
          // finter[bn]->SetParLimits(2 + 2 * p, wfampl[bn * maxwfpulses + p ]/AMP_SCALE * 0.2, wfampl[bn * maxwfpulses + p ]/AMP_SCALE * 5);   
 
@@ -752,6 +751,7 @@ mopts.SetPrintLevel(0);
 mopts.SetMaxIterations(1000);
 cfg.CreateParamsSettings(wfunc);
 
+/*
 for (int p = 0; p < wfnpulse[bn]; ++p) {
   int iA   = 2 + 2*p;
   double seed = wfampl[bn*maxwfpulses + p];
@@ -775,7 +775,7 @@ ps.SetLimits(seed * 0.2,    // finite lower
      //       << (ps.HasUpperLimit() ? std::to_string(ps.UpperLimit()) : "+inf")
       //      << "]\n";
 }
-
+*/
 
 /*
 int npar2 = 1 + 2*wfnpulse[bn];
@@ -824,10 +824,16 @@ std::cerr<<std::fixed<<std::setprecision(16)<<"STILL Fit failed for event "<<evt
  nFitFailures.fetch_add(1, std::memory_order_relaxed);
  for (int p = 0; p < wfnpulse[bn]; p++)
   {
-  cout<< wfampl[bn * maxwfpulses + p ]<<endl;
-  wftime[bn * maxwfpulses + p ] = -1000;
-  wfampl[bn * maxwfpulses + p ] = -1000; 
-  cout<< wfampl[bn * maxwfpulses + p ]<<endl;
+    cout<< wfampl[bn * maxwfpulses + p ]<<"  @ " <<wftime[bn * maxwfpulses + p ] <<endl;
+ // wftime[bn * maxwfpulses + p ] = -1000;
+ // wfampl[bn * maxwfpulses + p ] = -1000; 
+ //change time back to corrected in ns
+ wftime[bn * maxwfpulses + p ]  = (wftime[bn * maxwfpulses + p ]-timeref[bn])*dt                     // convert bins → ns
+                   + corr_time_HMS                // add HMS correction
+                   - cortime[bn]                  // subtract block‐by‐block cable delay
+                   - timerefacc*dt; 
+
+  cout<< wfampl[bn * maxwfpulses + p ]<<"  @ " <<wftime[bn * maxwfpulses + p ] <<endl;
   }
 
 
@@ -858,7 +864,7 @@ auto &result = fitter.Result();
                    + corr_time_HMS                // add HMS correction
                    - cortime[bn]                  // subtract block‐by‐block cable delay
                    - timerefacc*dt;               // subtract your reference‐time offset
-       // cout<< wfampl[bn * maxwfpulses + p ]<<"   +  "<<binOff<<endl;
+        cout<< wfampl[bn * maxwfpulses + p ]<<"   +  "<<binOff<<endl;
     }
   unsigned npar = result.NPar();
   for(unsigned ip=0; ip<npar; ++ip) {
@@ -1294,8 +1300,8 @@ gPad->Update();
       + timeref[bn];
 
       // Debug: print out each candidate binOff
-   //   std::cout << "    → peak["<<p<<"] t_ns="<<t_ns 
-    //            << " ⇒ binOff="<<binOff << "\n";
+      std::cout << "    → peak["<<p<<"] t_ns="<<t_ns 
+                << " ⇒ binOff="<<binOff << "\n";
 
       // Now draw a TLine at x=binOff
       if (binOff >= 0.0 && binOff <= ntime) {
@@ -1489,3 +1495,4 @@ t.Continue();
   std::cout << "Total failed fits: " << nFitFailures.load()<<" total fits succeed:"<<nFitSucceeds.load() << "\n";
   t.Stop();
   t.Print();
+}
