@@ -131,11 +131,6 @@ void FindPulsesMF(int                                  bn,
     return;
   }
 
-      // 1) Zero‐initialize wfnpulse_out + amplitudes:
-      wfnpulse_out = 0;
-      for (int p = 0; p < maxwfpulses; ++p) {
-          wfampl_out[bn * maxwfpulses + p] = -1.0;
-      }
   
       // 2) Build the matched‐filter array mfVals[0..ntime−1]:
       std::array<Double_t, ntime> mfVals;
@@ -228,8 +223,8 @@ for (int i = 0; i < npeaks; ++i) {
               int ti = static_cast<int>(std::round(xpos));
               // raw amplitude = | raw_waveform(ti) − minsignal |
               Double_t rawAmp = std::abs( fullSigArr[ bn * ntime + ti ] - minsignal );
-              wfampl_out[ bn * maxwfpulses + wfnpulse_out ] = rawAmp;
-              wftime_out[ bn * maxwfpulses + wfnpulse_out ] = xpos;
+              wftime_out.push_back(xpos);
+              wfampl_out.push_back(rawAmp);
               wfnpulse_out++;
           }
       }
@@ -336,7 +331,7 @@ t.Continue();
 
 
   // ENABLE MT
-//  ROOT::EnableImplicitMT(nthreads);
+  ROOT::EnableImplicitMT(nthreads);
   std::cout << "Implicit MT enabled: " << ROOT::IsImplicitMTEnabled() << "\n";
   std::cout << "Number of threads: " << ROOT::GetThreadPoolSize() << "\n";
 
@@ -378,7 +373,7 @@ chain.SetBranchStatus("NPS.cal.fly.adcSampPulseTimeRaw",1);
   // Define a new RDataFrame that processes only 1% of the events
   auto nEventsToProcess = nEntriesDF / 1000;
   //auto df1percent = df.Range(0, nEventsToProcess);
-  auto df1percent = df.Range(10, 50);
+ // auto df1percent = df.Range(10, 50);
 
   Double_t dt = 4.;                                    // time bin (sample) width (4 ns), the total time window is then ntime*dt
   const int nslots = 1104;                             // nb maximal de slots dans tous les fADC
@@ -498,8 +493,8 @@ chain.SetBranchStatus("NPS.cal.fly.adcSampPulseTimeRaw",1);
      filetime.close();
 
   // Load only required branches into dataframe
-//  auto df2 = df.Define("NSampWaveForm", "Ndata.NPS.cal.fly.adcSampWaveform")
-    auto df2 = df1percent.Define("NSampWaveForm", "Ndata.NPS.cal.fly.adcSampWaveform")
+ auto df2 = df.Define("NSampWaveForm", "Ndata.NPS.cal.fly.adcSampWaveform")
+   // auto df2 = df1percent.Define("NSampWaveForm", "Ndata.NPS.cal.fly.adcSampWaveform")
                  .Define("SampWaveForm", "NPS.cal.fly.adcSampWaveform")
                  .Define("NadcCounter", "Ndata.NPS.cal.fly.adcCounter")
                  .Define("adcCounter", "NPS.cal.fly.adcCounter")
@@ -605,13 +600,16 @@ timerefacc = (calodist - 9.5) / (3.e8 * 1.e-9 * 4);
     Double_t Npulse[nblocks];
     Int_t nsampwf = 0;
 
-    std::vector<Int_t> wfnpulse(nblocks, -100);
+    std::vector<Int_t> wfnpulse(nblocks, 0);
 
     
 
 // Now create an outer RVec that contains nblocks copies of tmp:
-ROOT::RVec<Double_t> wfampl(nblocks * maxwfpulses, -100.0);
-ROOT::RVec<Double_t> wftime(nblocks * maxwfpulses, -100.0);
+ROOT::RVec<Double_t> wfampl;
+ROOT::RVec<Double_t> wftime;
+wfampl.reserve(nblocks*maxwfpulses);
+wftime.reserve(nblocks*maxwfpulses);
+ROOT::RVec<Int_t> blockOffset(nblocks+1,0);
 
 
     // not used but here they are anyway
@@ -626,7 +624,7 @@ ROOT::RVec<Double_t> wftime(nblocks * maxwfpulses, -100.0);
     Int_t binmax;
 
     // The fit function need to be moved into the scope of analyze to capture all variables (wfnpulse)
-    auto Fitwf = [=,&fitFailed,&signal, &wfnpulse, &wfampl, &finter, &wftime, &corr_time_HMS, &chi2](Double_t evt, Int_t bn, const Double_t Err_arr[])
+    auto Fitwf = [=,&blockOffset,&fitFailed,&signal, &wfnpulse, &wfampl, &finter, &wftime, &corr_time_HMS, &chi2](Double_t evt, Int_t bn, const Double_t Err_arr[])
     {
      // std::cout << ">>> Fitwf called for evt="<<evt<<" bn="<<bn<<" wfnpulse= "<<wfnpulse[bn]<<std::endl;
 
@@ -698,11 +696,11 @@ ROOT::RVec<Double_t> wftime(nblocks * maxwfpulses, -100.0);
         {
           finter[bn]->ReleaseParameter(1 + 2 * p);
           finter[bn]->ReleaseParameter(2 + 2 * p); 
-          finter[bn]->SetParameter(1 + 2 * p, wftime[bn * maxwfpulses + p ]-timeref[bn]);   
-          finter[bn]->SetParameter(2 + 2 * p, wfampl[bn * maxwfpulses + p ]);
+          finter[bn]->SetParameter(1 + 2 * p, wftime[blockOffset[bn] + p ]-timeref[bn]);   
+          finter[bn]->SetParameter(2 + 2 * p, wfampl[blockOffset[bn] + p ]);
        //   finter[bn]->FixParameter(2 + 2 * p, wfampl[bn * maxwfpulses + p ]);
-        //  finter[bn]->SetParLimits(1 + 2 * p, wftime[bn * maxwfpulses + p ]-timeref[bn] - 4, wftime[bn * maxwfpulses + p ]-timeref[bn] + 4);
-         // finter[bn]->SetParLimits(2 + 2 * p, wfampl[bn * maxwfpulses + p ]/AMP_SCALE * 0.2, wfampl[bn * maxwfpulses + p ]/AMP_SCALE * 5);   
+          finter[bn]->SetParLimits(1 + 2 * p, wftime[blockOffset[bn] + p]-timeref[bn] - 4, wftime[blockOffset[bn] + p]-timeref[bn] + 4);
+          finter[bn]->SetParLimits(2 + 2 * p, wfampl[blockOffset[bn] + p ] * 0.2, wfampl[blockOffset[bn] + p] * 5);   
 
         }
       }
@@ -808,7 +806,7 @@ if (ok) {
   
 if (!ok) {
   // retry just this one with a tougher configuration
-  cout<<"FAILED Again, retry"<<endl;
+  //cout<<"FAILED Again, retry"<<endl;
   cfg.MinimizerOptions().SetStrategy(2);
  // mopts.SetPrintLevel(1);
   cfg.MinimizerOptions().SetMaxIterations(5000);
@@ -818,22 +816,22 @@ if (ok) {
 }
 }
 if (!ok) {
-std::cerr<<std::fixed<<std::setprecision(16)<<"STILL Fit failed for event "<<evt<<", block "<<bn<<"\n";
+//std::cerr<<std::fixed<<std::setprecision(16)<<"STILL Fit failed for event "<<evt<<", block "<<bn<<"\n";
  //failcount++;
  fitFailed=true;
  nFitFailures.fetch_add(1, std::memory_order_relaxed);
  for (int p = 0; p < wfnpulse[bn]; p++)
   {
-    cout<< wfampl[bn * maxwfpulses + p ]<<"  @ " <<wftime[bn * maxwfpulses + p ] <<endl;
+ //   cout<< wfampl[blockOffset[bn] + p ]<<"  @ " <<wftime[blockOffset[bn] + p ] <<endl;
  // wftime[bn * maxwfpulses + p ] = -1000;
  // wfampl[bn * maxwfpulses + p ] = -1000; 
  //change time back to corrected in ns
- wftime[bn * maxwfpulses + p ]  = (wftime[bn * maxwfpulses + p ]-timeref[bn])*dt                     // convert bins → ns
+ wftime[blockOffset[bn] + p ]  = (wftime[blockOffset[bn] + p ]-timeref[bn])*dt                     // convert bins → ns
                    + corr_time_HMS                // add HMS correction
                    - cortime[bn]                  // subtract block‐by‐block cable delay
                    - timerefacc*dt; 
 
-  cout<< wfampl[bn * maxwfpulses + p ]<<"  @ " <<wftime[bn * maxwfpulses + p ] <<endl;
+ // cout<< wfampl[blockOffset[bn] + p ]<<"  @ " <<wftime[blockOffset[bn] + p ] <<endl;
   }
 
 
@@ -859,12 +857,12 @@ auto &result = fitter.Result();
         double corrTime = uncorTime + (corr_time_HMS - cortime[bn]);
     
         // 5) amplitude
-        wfampl[bn * maxwfpulses + p ] = result.Parameter(2 + 2*p);
-        wftime[bn * maxwfpulses + p ]  = binOff*dt                     // convert bins → ns
+        wfampl[blockOffset[bn] + p ] = result.Parameter(2 + 2*p);
+        wftime[blockOffset[bn] + p ]  = binOff*dt                     // convert bins → ns
                    + corr_time_HMS                // add HMS correction
                    - cortime[bn]                  // subtract block‐by‐block cable delay
                    - timerefacc*dt;               // subtract your reference‐time offset
-        cout<< wfampl[bn * maxwfpulses + p ]<<"   +  "<<binOff<<endl;
+      //if(wfampl[blockOffset[bn]+p]<0.0)  cout<<"HERE!!!!!"<< wfampl[blockOffset[bn] + p ]<<"   +  "<<binOff<<endl;
     }
   unsigned npar = result.NPar();
   for(unsigned ip=0; ip<npar; ++ip) {
@@ -1014,6 +1012,7 @@ chi2[bn] = tempchi2/ndf;
             Err[it] = e;
           }
 //Get the number of pulses from tspecrtum
+blockOffset[i] = wftime.size();
 FindPulsesMF(i,signal.data(),pres,minsignal[i],mfyref,mfint,timeref[i],timerefacc,wfnpulse[i],wftime,wfampl);
 bool okToFit = PassClusterThreshold(i,signal.data(),pres,ncol,nlin,nblocks,ntime,timeref[i],timerefacc,trig_thres,coinc_width);
 
@@ -1037,16 +1036,16 @@ else {
 }
           
 
-          for (Int_t p = 0; p < TMath::Max(wfnpulse[i], 1); p++)
+          for (Int_t p = 0; p < wfnpulse[i]; p++)
           {
 
-            if (wfampl[i * maxwfpulses + p ] > 20)
+            if (wfampl[blockOffset[i] + p ] > 20)
             {
 
               /// fix later //// diagnostic histos
               
 
-               h2time.push_back(wftime[i * maxwfpulses + p ]);
+               h2time.push_back(wftime[blockOffset[i] + p ]);
                h1time.push_back(finter[i]->GetParameter(1 + 2 * p) - timerefacc + corr_time_HMS / dt);
                //h1time.push_back(finter[i]->GsetParameter(2 + 2 * p));
               
@@ -1054,8 +1053,8 @@ else {
 
             if (p == 0)
             {
-              timewf[i] = wftime[i * maxwfpulses + p ];
-              amplwf[i] = wfampl[i * maxwfpulses + p ];
+              timewf[i] = wftime[blockOffset[i] + p ];
+              amplwf[i] = wfampl[blockOffset[i] + p ];
             }
 
             // if(p>0){if(TMath::Abs(wftime[i][p]-timerefacc/dt)<TMath::Abs(timewf[i]-timerefacc/dt)){timewf[i]=wftime[i][p];amplwf[i]=wfampl[i][p];}}//pour prendre le pulse dont le temps est le plus proche de timerefacc
@@ -1064,16 +1063,17 @@ else {
 
             if (p > 0)
             {
-              if (TMath::Abs(wftime[i * maxwfpulses + p ]) < TMath::Abs(timewf[i]))
+              if (TMath::Abs(wftime[blockOffset[i] + p ]) < TMath::Abs(timewf[i]))
               {
-                timewf[i] = wftime[i * maxwfpulses + p ];
-                amplwf[i] = wfampl[i * maxwfpulses + p ];
+                timewf[i] = wftime[blockOffset[i] + p ];
+                amplwf[i] = wfampl[blockOffset[i] + p ];
               }
             } // pour prendre le pulse dont le temps est le plus proche de timerefacc
 
           } // end of loop over maxpulses
         } // end of condition over col,lin
       } // end of loop over les blocs
+blockOffset[nblocks] = wftime.size();
 
       // Calculation of some output branch variables
       for (Int_t i = 0; i < nblocks; i++)
@@ -1207,10 +1207,9 @@ if((int)evt % 1000 == 0){
   // 1) build a list of blocks with ≥1 fitted pulse
 // … assume `wfnpulse`, `wftime`, `finter`, `signal`, `timeref`, `cortime`, `corr_time_HMS`, etc. are all filled already …
 
-if(true){
 
 // 1) collect exactly those blocks that had ≥1 peak:
-if(true){
+if(false){
 std::vector<int> activeBlocks;
 for (int bn = 0; bn < nblocks; ++bn) {
   if (wfnpulse[bn] > 0 && finter[bn]) {
@@ -1289,7 +1288,7 @@ gPad->Update();
 
     // 4) draw vertical red lines for each TSpectrum‐found peak
     for (int p = 0; p < wfnpulse[bn]; ++p) {
-      Double_t t_ns = wftime[bn*maxwfpulses + p];
+      Double_t t_ns = wftime[blockOffset[bn] + p];
       // convert that “corrected ns‐time” back to “bin index”:
       Double_t binOff = (
         t_ns 
@@ -1300,8 +1299,8 @@ gPad->Update();
       + timeref[bn];
 
       // Debug: print out each candidate binOff
-      std::cout << "    → peak["<<p<<"] t_ns="<<t_ns 
-                << " ⇒ binOff="<<binOff << "\n";
+    //  std::cout << "    → peak["<<p<<"] t_ns="<<t_ns 
+    //            << " ⇒ binOff="<<binOff << "\n";
 
       // Now draw a TLine at x=binOff
       if (binOff >= 0.0 && binOff <= ntime) {
@@ -1354,7 +1353,7 @@ ln.DrawClone("same");
 ///////// end plotting
 
 
-}
+
 
 
 //std::cout << "evt=" << evt << ": " << nonzero << " non-empty histograms\n";
