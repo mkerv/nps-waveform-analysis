@@ -55,18 +55,15 @@ root -l -b -q '.X npsWF.C+(run, seg, nThreads, makeDiagnostics)'
 12. **Waveform fit**: Call `Fitwf` 
     1.  Create a `ROOT::Interpolator` with cubic splines over `ntime=110` points.filled with the reference waveform data points. This turns the descrete reference waveform data into a continuous differentiable function.
     2. Define a model function:  
-    $$
-       f(x;\,\mathbf{p}) \;=\; p_0 \;+\;\sum_{n=0}^{N-1} A_{n}\;\bigl[\mathrm{ref}(x - t_{n})\bigr]
-     $$
+    $f(x;\,\mathbf{p}) \;=\; p_0 \;+\;\sum_{n=0}^{N-1} A_{n}\;\bigl[\mathrm{ref}(x - t_{n})\bigr]$
+
        * Where $p_{0}$ is the constant pedestal. For each pulse $n$ :  $t_{n}$ is the time offset (in ADC-bin units) from the block’s reference pulse. $A_{n}$ is the amplitude of that pulse, and ref(t) returns the reference amplitude scale at time t normalized to 1.
-    3. Wrap the model function in a `ROOT::TF1` and set the initial parameters of the model function as the `wfampl` and `wftime - timeref` for all the pulses found in `FindPulsesMF`. Note that the time is set as a distance away from the reference pulse time
-    4. Creat a `ROOT::Fit::Fitter` and configure it with your desired minimizer. By default we use Minuit2's Migrad. See https://root.cern.ch/root/htmldoc/guides/minuit2/Minuit2.html
-    5. Provide the fitter with the raw binned data, the interpolated reference waveform, and the model. Call `fitter.LeastSquareFit(data)` to perform the fit. 
-         $$
-          \chi^2 \;=\;\sum_i \frac{\bigl(y_i - f(x_i;p)\bigr)^2}{\sigma_i^2},
-        $$
-    6. If the minimizer fails to converge, the fit will fail and reattempt with more iterations and a higher minimizer "stategy". If it fails once again the output results will sipmly be the time/amp of the raw data as found by `TSpectrum`
-    7. The fit results are stored in `RVec<std::vector<Double_t>> wfampl` , `RVec<std::vector<Double_t>> wftime` , and `vector<std::vector<Double_t>> chi2`
+    4. Wrap the model function in a `ROOT::TF1` and set the initial parameters of the model function as the `wfampl` and `wftime - timeref` for all the pulses found in `FindPulsesMF`. Note that the time is set as a distance away from the reference pulse time
+    5. Creat a `ROOT::Fit::Fitter` and configure it with your desired minimizer. By default we use Minuit2's Migrad. See https://root.cern.ch/root/htmldoc/guides/minuit2/Minuit2.html
+    6. Provide the fitter with the raw binned data, the interpolated reference waveform, and the model. Call `fitter.LeastSquareFit(data)` to perform the fit. 
+         $\chi^2 \;=\;\sum_i \frac{\bigl(y_i - f(x_i;p)\bigr)^2}{\sigma_i^2}$        $
+    7. If the minimizer fails to converge, the fit will fail and reattempt with more iterations and a higher minimizer "stategy". If it fails once again the output results will sipmly be the time/amp of the raw data as found by `TSpectrum`
+    8. The fit results are stored in `RVec<std::vector<Double_t>> wfampl` , `RVec<std::vector<Double_t>> wftime` , and `vector<std::vector<Double_t>> chi2`
         - Note: Before saving the fit result, the time is converted from 4ns bins to a time in ns with a refernce time offset and per-block time correction. See Section: Time Correction for more details
   
 13. **Exit the Block Loop**: after the fit some diagnostic variables are computed and a debug option can be toggled to print PDFs of fitted waveforms. This will create plots for **all** fitted events, so only enable if you know what youre doing.  
