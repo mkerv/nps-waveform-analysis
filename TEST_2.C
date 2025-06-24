@@ -39,12 +39,14 @@
 #include "TSpectrum.h"
 #include "TLine.h"
 #include "TError.h"
-
+#include <thread>
+#include <mutex>
 template <typename T>
 void checkType(const T &obj)
 {
   static_assert(std::is_same<T, std::vector<Double_t>>::value, "Type is not correct!");
 }
+static std::mutex s_spectrum_mutex;
 
 const int ntime = 110;           // number of time samples for each fADC channel (100 for runs 55 and 56)
 const int nfADC = 7;             // number of fADC modules (16 channels each) used in this run
@@ -128,8 +130,9 @@ void FindPulsesMF(int bn,
                   Double_t timeref_bin,             // in sample‐units
                   Double_t timerefacc,              // in sample‐units
                   Int_t &wfnpulse_out,              // output: how many pulses found
-                  ROOT::RVec<Double_t> &wftime_out, // size = nblocks*maxwfpulses
-                  ROOT::RVec<Double_t> &wfampl_out  // size = nblocks*maxwfpulses
+                  std::vector<Double_t>& wftime_out, // size = nblocks*maxwfpulses
+                  std::vector<Double_t>& wfampl_out,  // size = nblocks*maxwfpulses
+                  Int_t offset
 )
 {
 
@@ -176,11 +179,15 @@ void FindPulsesMF(int bn,
   }
 
   // — suppress ROOT warnings for just this call: all the tspectrum finding too many pulses on noise
-  auto old = gErrorIgnoreLevel;
-  gErrorIgnoreLevel = kError; // ignore kInfo and kWarning
-  TSpectrum spec(maxwfpulses);
-  Int_t npeaks = spec.Search(hMF.get(), 2, "nobackground,nodraw", specthres);
-  gErrorIgnoreLevel = old;
+  //auto old = gErrorIgnoreLevel;
+ // gErrorIgnoreLevel = kError; // ignore kInfo and kWarning
+  Int_t npeaks;
+    // lock _only_ the Search() itself
+    std::lock_guard<std::mutex> lock(s_spectrum_mutex);
+    TSpectrum spec(maxwfpulses);
+    npeaks = spec.Search(hMF.get(), 2, "nobackground,nodraw", specthres);
+
+ // gErrorIgnoreLevel = old;
   // Loop over TSpectrum’s found peaks, record those within [mfstart..mfend], amplitude > mfthres:
   for (int ip = 0; ip < npeaks && wfnpulse_out < maxwfpulses; ++ip)
   {
@@ -191,8 +198,10 @@ void FindPulsesMF(int bn,
       int ti = static_cast<int>(std::round(xpos));
       // raw amplitude = | raw_waveform(ti) − minsignal |
       Double_t rawAmp = std::abs(fullSigArr[bn * ntime + ti] - minsignal);
-      wftime_out.push_back(xpos);
-      wfampl_out.push_back(rawAmp);
+      wftime_out[offset+wfnpulse_out]=xpos;
+      wfampl_out[offset+wfnpulse_out]=rawAmp;
+      //wftime_out.push_back(xpos);
+      //wfampl_out.push_back(rawAmp);
       wfnpulse_out++;
     }
   }
@@ -300,6 +309,7 @@ void TEST_2(int run, int seg, int threads)
   t.Continue();
 
   // ENABLE MT
+  gErrorIgnoreLevel = kError;
   ROOT::EnableImplicitMT(nthreads);
   std::cout << "Implicit MT enabled: " << ROOT::IsImplicitMTEnabled() << "\n";
   std::cout << "Number of threads: " << ROOT::GetThreadPoolSize() << "\n";
@@ -563,11 +573,16 @@ void TEST_2(int run, int seg, int threads)
 
     std::vector<Int_t> wfnpulse(nblocks, 0);
 
-    ROOT::RVec<Double_t> wfampl;
-    ROOT::RVec<Double_t> wftime;
-    wfampl.reserve(nblocks * maxwfpulses);
-    wftime.reserve(nblocks * maxwfpulses);
-    ROOT::RVec<Int_t> blockOffset(nblocks + 1, 0);
+    //ROOT::RVec<Double_t> wfampl;
+    //ROOT::RVec<Double_t> wftime;
+    //wfampl.reserve(nblocks * maxwfpulses);
+    //wftime.reserve(nblocks * maxwfpulses);
+    std::vector<Double_t> wfampl, wftime;
+wfampl.resize(nblocks*maxwfpulses, -999);
+wftime.resize(nblocks*maxwfpulses, -999);
+std::vector<Int_t> blockOffset(nblocks + 1, 0);
+Int_t currentOffset = 0;
+
 
     // not used but here they are anyway
     Double_t ampl2[nblocks];
@@ -624,7 +639,7 @@ void TEST_2(int run, int seg, int threads)
 
       if (wfnpulse[bn] > maxwfpulses - 2)
       {
-        cout << "Warning : excessively high number of pulses in the block wf " << bn << endl;
+        //cout << "Warning : excessively high number of pulses in the block wf " << bn << endl;
       }
 
       // Adjust the parameters of the fit function
@@ -761,7 +776,7 @@ void TEST_2(int run, int seg, int threads)
 
           // cout<< wfampl[blockOffset[bn] + p ]<<"  @ " <<wftime[blockOffset[bn] + p ] <<endl;
         }
-
+        chi2[bn] = -100.;
         return;
       }
 
@@ -832,7 +847,7 @@ void TEST_2(int run, int seg, int threads)
         bloc = SampWaveForm[ns];
         ns++; // bloc number (actually the slot number)
         nsamp = SampWaveForm[ns];
-        ns++; // time samples (should be equal to ntime (100))
+        ns++; // time samples (should be equal to ntime (110))
 
         if (bloc == 2000)
           bloc = 1080; // modification of the bloc number because the fADC (16 slots) corresponding to slot 720-736 is used for the scintillators
@@ -930,8 +945,10 @@ void TEST_2(int run, int seg, int threads)
             Err[it] = e;
           }
           // Get the number of pulses from tspecrtum
-          blockOffset[i] = wftime.size();
-          FindPulsesMF(i, signal.data(), pres, minsignal[i], mfyref, mfint, timeref[i], timerefacc, wfnpulse[i], wftime, wfampl);
+         // blockOffset[i] = wftime.size();
+          blockOffset[i] = currentOffset;
+          FindPulsesMF(i, signal.data(), pres, minsignal[i], mfyref, mfint, timeref[i], timerefacc, wfnpulse[i], wftime, wfampl,blockOffset[i]);
+          currentOffset += wfnpulse[i];
           bool okToFit = PassClusterThreshold(i, signal.data(), pres, ncol, nlin, nblocks, ntime, timeref[i], timerefacc, trig_thres, coinc_width);
 
           if (okToFit)
@@ -989,7 +1006,9 @@ void TEST_2(int run, int seg, int threads)
           } // end of loop over maxpulses
         } // end of condition over col,lin
       } // end of loop over les blocs
-      blockOffset[nblocks] = wftime.size(); // after loop over blocks ensure the last offset is filled
+      //blockOffset[nblocks] = wftime.size(); // after loop over blocks ensure the last offset is filled
+      blockOffset[nblocks] = currentOffset;  //  total number of real pulses
+
 
       // Calculation of some output branch variables
       for (Int_t i = 0; i < nblocks; i++)
@@ -1255,7 +1274,17 @@ void TEST_2(int run, int seg, int threads)
     ///////// end of plotting
 
     tlambda.Stop();
-    return std::make_tuple(chi2, ampl, amplwf, wfnpulse, Sampampl, Samptime, timewf, enertot, integtot, pres, corr_time_HMS, h1time, h2time, wfampl, wftime);
+return std::make_tuple(
+  chi2, ampl, amplwf, wfnpulse,
+  Sampampl, Samptime, timewf,
+  enertot, integtot, pres,
+  corr_time_HMS, h1time, h2time,
+  ROOT::RVec<Double_t>(wfampl.begin(), wfampl.begin() + blockOffset[nblocks]),
+  ROOT::RVec<Double_t>(wftime.begin(), wftime.begin() + blockOffset[nblocks])
+);
+
+
+
   }; // End of lambda (event loop)
 
   /////// Write the output files //////////////////////////////////////////////////////////
