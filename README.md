@@ -116,7 +116,6 @@ Where the fit occurs: Creates interpolator of reference waveform data. Initializ
 | wfnpulse      | `std::vector<Int_t>`                 | Number of pulses found by TSpectrum in this block                            |
 | timewf        | `std::vector<Double_t>` | Peak time of the first fitted pulse in a block (in 4ns ADC-bin units)                                  |
 | amplwf        | `std::vector<Double_t>` | Peak amplitude of the first fitted pulse in a block (mV)|
-
 | ampl          | `std::vector<Double_t>` | The maximum value of all ADC samples in each block       (mV)                        |
 | Sampampl      | `std::vector<Double_t>` |                            |
 | Samptime      | `std::vector<Double_t>` |                        |
