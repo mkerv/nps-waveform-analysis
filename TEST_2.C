@@ -469,7 +469,7 @@ void TEST_2(int run, int seg, int threads)
 
   // Load only required branches into dataframe
   auto df2 = df.Define("NSampWaveForm", "Ndata.NPS.cal.fly.adcSampWaveform")
-                 // auto df2 = df1percent.Define("NSampWaveForm", "Ndata.NPS.cal.fly.adcSampWaveform")
+  //              auto df2 = df1percent.Define("NSampWaveForm", "Ndata.NPS.cal.fly.adcSampWaveform")
                  .Define("SampWaveForm", "NPS.cal.fly.adcSampWaveform")
                  .Define("NadcCounter", "Ndata.NPS.cal.fly.adcCounter")
                  .Define("adcCounter", "NPS.cal.fly.adcCounter")
@@ -598,6 +598,14 @@ Int_t currentOffset = 0;
     // The fit function need to be moved into the scope of analyze to capture all variables (wfnpulse)
     auto Fitwf = [=, &blockOffset, &fitFailed, &signal, &wfnpulse, &wfampl, &finter, &wftime, &corr_time_HMS, &chi2](Double_t evt, Int_t bn, const Double_t Err_arr[])
     {
+
+    // Dont fit pedestal with a constant function if wnpulse from tpsectrum==0  
+    if (wfnpulse[bn] == 0) {
+        chi2[bn] = -100.0;
+        return;
+    }
+
+
       // Build a thread‐local Interpolator
       auto interpPtr = std::make_shared<ROOT::Math::Interpolator>(
           ntime,
@@ -668,7 +676,7 @@ Int_t currentOffset = 0;
 
       // Prepare binned data from the histogram:
       ROOT::Fit::BinData data(ntime, /*nDim=*/1);
-      for (int ib = 0; ib < ntime; ++ib)
+      for (int ib = mfstart; ib < mfend; ++ib)
       {
         double x[1] = {static_cast<double>(ib)};
         double y = signal[bn * ntime + ib];
