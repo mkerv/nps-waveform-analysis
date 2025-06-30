@@ -318,6 +318,7 @@ void TEST_2(int run, int seg, int threads)
   chain.SetBranchStatus("*", 0);
 
   chain.SetBranchStatus("g.evnum", 1);
+  chain.SetBranchStatus("g.runnum", 1);
   chain.SetBranchStatus("Ndata.NPS.cal.fly.adcSampWaveform", 1);
   chain.SetBranchStatus("Ndata.NPS.cal.fly.adcCounter", 1);
   chain.SetBranchStatus("Ndata.NPS.cal.fly.adcSampPulseAmp", 1);
@@ -483,7 +484,8 @@ void TEST_2(int run, int seg, int threads)
                  .Define("adcSampPulseTime", "NPS.cal.fly.adcSampPulseTime")
                  .Define("NadcSampPulseTimeRaw", "Ndata.NPS.cal.fly.adcSampPulseTimeRaw")
                  .Define("adcSampPulseTimeRaw", "NPS.cal.fly.adcSampPulseTimeRaw")
-                 .Define("evt", "g.evnum"); // define event number from row of rdataframe for troubleshoooting (threadsafe
+                 .Define("evt", "g.evnum") // define event number from row of rdataframe for troubleshoooting (threadsafe
+                 .Define("runnum", "g.runnum"); // define event number from row of rdataframe for troubleshoooting (threadsafe
   // Output rootfile
   // Other variables
   Int_t ilinc, icolc, inp;
@@ -963,15 +965,17 @@ Int_t currentOffset = 0;
           {
             // cout<<evt<<" passed cluster threshold for block "<<i<<endl;
             Fitwf(evt, i, Err.data());
-            if (finter[i])
+            if (wfnpulse[i] > 0){
+            if(finter[i])
             {
-              finter[i]->SetLineColor(kBlue);
+              finter[i]->SetLineColor(kBlue); 
               finter[i]->SetLineWidth(2);
             }
             else
             {
-              cout << "Failed to create TF1 in Fitwf for block " << i << ", event " << evt << endl;
+              cout << "Failed to create TF1 in Fitwf for block " << i << ", event " << evt <<"  npulse: "<<wfnpulse[i]<< endl;
             }
+          }
           }
           else
           {
@@ -1267,7 +1271,7 @@ Int_t currentOffset = 0;
 
         // 6) finally update+print the canvas to a single‐page PDF
         c1->Update();
-        TString pdfName = Form("figures/fits_run%d_evt%.0f.pdf", run, evt);
+        TString pdfName = Form("figures/updated_fits_run%d_evt%.0f.pdf", run, evt);
         c1->Print(pdfName);
 
         // 7) clean up
@@ -1380,7 +1384,7 @@ return std::make_tuple(
   ROOT::RDF::RSnapshotOptions opts;
   opts.fMode = "RECREATE";
   // opts.fBasketSize = 512 * 1024;        // 512 KB per basket
-  df_final.Snapshot("WF", tempout, {"chi2", "ampl", "amplwf", "wfnpulse", "Sampampl", "Samptime", "timewf", "enertot", "integtot", "pres", "corr_time_HMS", "h1time", "h2time", "evt", "wfampl", "wftime"}, opts);
+  df_final.Snapshot("WF", tempout, {"chi2", "ampl", "amplwf", "wfnpulse", "Sampampl", "Samptime", "timewf", "enertot", "integtot", "pres", "corr_time_HMS", "h1time", "h2time","runnum", "evt", "wfampl", "wftime"}, opts);
   t.Stop();
   std::cout
       << "=== Snapshot done. Elapsed real time: " << t.RealTime()
@@ -1403,7 +1407,7 @@ return std::make_tuple(
     fin->Close();
     return;
   }
-  tin->BuildIndex("evt");
+  tin->BuildIndex("runnum","evt");
 
   // 3) Clone into your main file (atomic overwrite)
   TFile *fout = TFile::Open(outFile, "UPDATE");
@@ -1415,7 +1419,7 @@ return std::make_tuple(
   }
   fout->cd();
   auto tout = tin->CloneTree(-1);
-  tout->BuildIndex("evt");
+  tout->BuildIndex("runnum","evt");
 
   std::cout
       << "=== Sorting done. Elapsed real time: " << t.RealTime()
