@@ -195,7 +195,7 @@ void FindPulsesMF(int bn,
     Double_t ypos = spec.GetPositionY()[ip];
     if (xpos > std::max(mfstart, 0) && xpos < std::min(mfend, ntime - 1) && ypos > mfthres)
     {
-      int ti = static_cast<int>(std::round(xpos));
+      int ti = static_cast<int>(std::round(xpos))-2; //the minus 2 because round goes up a bin. andwassim used a histogram which starts at 1 and we use array which starts at 0
       // raw amplitude = | raw_waveform(ti) − minsignal |
       Double_t rawAmp = std::abs(fullSigArr[bn * ntime + ti] - minsignal);
       wftime_out[offset+wfnpulse_out]=xpos;
@@ -203,6 +203,7 @@ void FindPulsesMF(int bn,
       //wftime_out.push_back(xpos);
       //wfampl_out.push_back(rawAmp);
       wfnpulse_out++;
+     // std::cout<<"block"<<" tspectum postion/amp: " <<xpos<<"  "<<ypos<<" "<<rawAmp<<std::endl;
     }
   }
 
@@ -298,7 +299,7 @@ void TEST_2(int run, int seg, int threads)
   }
   testOpen->Close();
 
-  TString outFile = Form("/volatile/hallc/nps/kerver/ROOTfiles/WF/nps_production_%d_%d_%d_interactive_tspec.root", run, seg, nthreads);
+  TString outFile = Form("/volatile/hallc/nps/kerver/ROOTfiles/WF/nps_production_%d_%d_%d_timing.root", run, seg, nthreads);
 
   if (!FastCloneAndFilter(filename, outFile))
   {
@@ -499,7 +500,7 @@ void TEST_2(int run, int seg, int threads)
 
   if (run > 1571 && run < 3667)
   {
-    calodist = 3.5;
+    calodist = 3.0;
   }
   else if (run > 3666 && run < 4632)
   {
@@ -522,6 +523,7 @@ void TEST_2(int run, int seg, int threads)
     calodist = 3.5;
   }
   timerefacc = (calodist - 9.5) / (3.e8 * 1.e-9 * 4);
+  cout<<" timerefacc = "<<timerefacc<<endl;
   // Read the mean time positions of cosmic pulses (this is determined by the macro analyse_wassim.C)
   Float_t timemean2[nblocks];
   for (Int_t ii = 0; ii < nblocks; ii++)
@@ -657,6 +659,7 @@ Int_t currentOffset = 0;
       {
         for (Int_t p = 0; p < TMath::Min(maxwfpulses, wfnpulse[bn]); p++)
         {
+  //        std::cout<<"wftime before fit"<<wftime[blockOffset[bn] + p]<< "  reftime  "<<timeref[bn]<< "  cortime  "<<cortime[bn]  <<" wfample :"<<wfampl[blockOffset[bn] + p] <<std::endl;
           finter[bn]->ReleaseParameter(1 + 2 * p);
           finter[bn]->ReleaseParameter(2 + 2 * p);
           finter[bn]->SetParameter(1 + 2 * p, wftime[blockOffset[bn] + p] - timeref[bn]);
@@ -674,18 +677,29 @@ Int_t currentOffset = 0;
         pedestal += signal[bn * ntime + i];
       }
       pedestal /= 20;
-      finter[bn]->SetParameter(0, pedestal);
+      finter[bn]->SetParameter(0, 0);      
 
       // Prepare binned data from the histogram:
       ROOT::Fit::BinData data(ntime, /*nDim=*/1);
-      for (int ib = mfstart; ib < mfend; ++ib)
+      for (int ib = mfstart-9; ib < mfend+9; ++ib)
       {
-        double x[1] = {static_cast<double>(ib)};
+        double x[1] = {static_cast<double>(ib)+0.5};
         double y = signal[bn * ntime + ib];
         // double err  = std::sqrt(std::abs(y * 4.096 / 2.0)) / 4.096;
         double err = Err_arr[ib];
         data.Add(x, y, err);
       }
+/*
+std::cout << "points = " << data.Size() << "\n";
+for (unsigned i = 0; i < data.Size(); ++i) {
+  double yyy, invErr;
+  const double* xp = data.GetPoint(i, yyy, invErr);  // xp[0] is x for 1D
+  double xxx   = xp[0];
+
+  std::cout<<bn<<"  " << i << "  x=" << xxx << "  y=" << yyy
+            << "  err=" <<  invErr << "\n";
+}
+*/
 
       // Wrap TF1 into a IModelFunction via WrappedMultiTF1:
       ROOT::Math::WrappedMultiTF1 wfunc(*finter[bn], finter[bn]->GetNdim());
@@ -808,12 +822,15 @@ Int_t currentOffset = 0;
         double corrTime = uncorTime + (corr_time_HMS - cortime[bn]);
 
         // 5) amplitude
-        wfampl[blockOffset[bn] + p] = result.Parameter(2 + 2 * p);
+        wfampl[blockOffset[bn] + p] = result.Parameter(2 + 2 * p)+result.Parameter(0);
         wftime[blockOffset[bn] + p] = binOff * dt        // convert bins → ns
                                       + corr_time_HMS    // add HMS correction
                                       - cortime[bn]      // subtract block‐by‐block cable delay
                                       - timerefacc * dt; // subtract your reference‐time offset
         // if(wfampl[blockOffset[bn]+p]<0.0)  cout<<"HERE!!!!!"<< wfampl[blockOffset[bn] + p ]<<"   +  "<<binOff<<endl;
+       // cout<<"evt: "<<evt<<" bn:"<<bn<<" numpulses:"<<wfnpulse[bn]<<" pulsenum:"<< p<<" time: "<<wftime[blockOffset[bn] + p]<<" cortimehms: "<<corr_time_HMS<<" cortime: "<<cortime[bn]<<" timerefacc:"<<timerefacc<<endl;
+        //         std::cout<<"fiot result: " <<binOff<<" wftime after fit"<<wftime[blockOffset[bn] + p]<< "  reftime  "<<timeref[bn] <<" wfample :"<<wfampl[blockOffset[bn] + p]<<" corr_time_HMS  :"<<corr_time_HMS <<" cortime[bn]  :"<<cortime[bn]  <<std::endl;
+
       }
       unsigned npar = result.NPar();
       for (unsigned ip = 0; ip < npar; ++ip)
@@ -906,7 +923,7 @@ Int_t currentOffset = 0;
         {
           if (TMath::Abs(corr_time_HMS - (adcSampPulseTime[iNdata] - adcSampPulseTimeRaw[iNdata] / 16. - tdcoffset[(int)(adcCounter[iNdata])])) > 0.001)
           {
-            // cout << "problem HMS time correction event " << evt <<"  "<< corr_time_HMS <<" "<<tdcoffset[(int)(adcCounter[iNdata])]<< endl;
+            cout << "problem HMS time correction event " << evt <<"  "<< corr_time_HMS <<" "<<tdcoffset[(int)(adcCounter[iNdata])]<< endl;
           }
         }
 
@@ -941,28 +958,30 @@ Int_t currentOffset = 0;
       // Fit de la wf
       for (Int_t i = 0; i < nblocks; i++)
       {
+        wfnpulse[i] = 0; //just in case
+
         if (pres[i] == 1 && preswf[i] == 1) // if this block is present during event
         {
           for (Int_t it = 0; it < nsamp; it++)
           {
             Double_t y = signal[i * ntime + it];
-            Double_t e = std::sqrt(std::abs(y * 4.096 / 2.)) / 4.096;
-
-            if (e < 1.)
-            {
-              e = std::sqrt(std::abs(1.0 * 4.096 / 2.)) / 4.096;
-            }
+            Double_t e = std::sqrt(std::abs(16.0 + y / 16.));
+          e=TMath::Sqrt(TMath::Abs(y * 4.096 / 2.)) / 4.096;
+                           if (y < 1.) e=TMath::Sqrt(TMath::Abs(1. * 4.096 / 2.)) / 4.096;
+            
             Err[it] = e;
           }
           // Get the number of pulses from tspecrtum
          // blockOffset[i] = wftime.size();
           blockOffset[i] = currentOffset;
-          FindPulsesMF(i, signal.data(), pres, minsignal[i], mfyref, mfint, timeref[i], timerefacc, wfnpulse[i], wftime, wfampl,blockOffset[i]);
-          currentOffset += wfnpulse[i];
+          //FindPulsesMF(i, signal.data(), pres, minsignal[i], mfyref, mfint, timeref[i], timerefacc, wfnpulse[i], wftime, wfampl,blockOffset[i]);
+          //currentOffset += wfnpulse[i];
           bool okToFit = PassClusterThreshold(i, signal.data(), pres, ncol, nlin, nblocks, ntime, timeref[i], timerefacc, trig_thres, coinc_width);
 
           if (okToFit)
           {
+            FindPulsesMF(i, signal.data(), pres, minsignal[i], mfyref, mfint, timeref[i], timerefacc, wfnpulse[i], wftime, wfampl,blockOffset[i]);
+            currentOffset += wfnpulse[i];
             // cout<<evt<<" passed cluster threshold for block "<<i<<endl;
             Fitwf(evt, i, Err.data());
             if (wfnpulse[i] > 0){
@@ -981,6 +1000,7 @@ Int_t currentOffset = 0;
           {
             // We decided NOT to fit this block, so explicitly leave finter[i] == nullptr
             // and skip every attempt to use it.
+          chi2[i] = -200; //flag to show failed cluster threshold
 
             continue;
           }
@@ -1205,7 +1225,7 @@ Int_t currentOffset = 0;
               // cout<<endl;
 
               finter[bn]->SetLineColor(kBlue);
-              finter[bn]->SetLineWidth(2);
+              finter[bn]->SetLineWidth(1);
               // restrict the drawing range to [0..ntime]:
               finter[bn]->SetRange(0.0, double(ntime));
               finter[bn]->Draw("same");
@@ -1271,7 +1291,7 @@ Int_t currentOffset = 0;
 
         // 6) finally update+print the canvas to a single‐page PDF
         c1->Update();
-        TString pdfName = Form("figures/updated_fits_run%d_evt%.0f.pdf", run, evt);
+        TString pdfName = Form("figures/16err_updated_fits_run%d_evt%.0f.pdf", run, evt);
         c1->Print(pdfName);
 
         // 7) clean up
