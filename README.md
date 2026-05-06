@@ -9,21 +9,22 @@
 4. Fits each pulse using **Minuit2** (Fitter API)  
 5. Writes per-pulse time/amplitude into a new `WF` TTree in your output root file  
 
-##Running on Jlab Farm
+## Running on Jlab Farm
 - The code lives on the jlab system under the nps-ana account group space: /group/nps/nps-ana/wf-analysis/
 - Before running a job, zip the code via the script: ./zipCode.sh job-name
  - Verify that the code is now in a tar file under ./code
 - Generate a list of runs to analyze under ./run-list
- - The run-list file should be titled "rl_PASSS2_<job-name>.dat", where job-name is typically the kinematic being analyzed
- - The run-list file should be space-delimited with 3 columns: run-num , number of segments, memory required (set to 0 if unsure) 
+  - The run-list file should be titled "rl_PASSS2_<job-name>.dat", where job-name is typically the kinematic being analyzed
+  - The run-list file should be space-delimited with 3 columns: run-num , number of segments, memory required (set to 0 if unsure) 
 - Generate the job json via the script: python3 hcswif4.py job-name job-number number-threads
- - Verify that a job json is now in ./jsons
-- Launch the job via the Swif2 system: ```bash 
+  - Verify that a job json is now in ./jsons
+- Launch the job via the Swif2 system: 
+```bash 
 swif2 import -file wf-MT_<job-name>_<job-number>_<number-threads>.json
 swif2 start <job-name>
- ```
+```
 - Output root files will be stored on mss at: /mss/hallc/c-nps/analysis/pass2/replays/updated/
- - To change the default output location, one must edit the hcswif4.py file first
+  - To change the default output location, one must edit the hcswif4.py file first
 
 ## Prerequisites
 - **ROOT ≥ 6.30.04** 
