@@ -288,9 +288,9 @@ void TEST_2(int run, int seg, int threads)
 
   // BUILD TCHAIN
   TChain chain("T");
-  TString filename = Form("/cache/hallc/c-nps/analysis/pass2/replays/updated/nps_hms_coin_%d_%d_1_-1.root", run, seg);
+  // TString filename = Form("/cache/hallc/c-nps/analysis/pass2/replays/updated/nps_hms_coin_%d_%d_1_-1.root", run, seg);
   // TString filename = Form("/mss/hallc/c-nps/analysis/online/replays/nps_hms_coin_%d_%d_1_-1.root", run, seg);
-  // TString filename = Form("../nps_hms_coin_%d_%d_1_-1.root", run, seg);
+  TString filename = Form("../nps_hms_coin_%d_%d_1_-1.root", run, seg);
   TFile *testOpen = TFile::Open(filename);
   if (!testOpen || testOpen->IsZombie())
   {
@@ -299,7 +299,8 @@ void TEST_2(int run, int seg, int threads)
   }
   testOpen->Close();
 
-  TString outFile = Form("/volatile/hallc/nps/kerver/ROOTfiles/WF/nps_production_%d_%d_%d_timing.root", run, seg, nthreads);
+  // TString outFile = Form("/volatile/hallc/nps/kerver/ROOTfiles/WF/nps_production_%d_%d_%d_newErr.root", run, seg, nthreads);
+  TString outFile = Form("../nps_production_%d_%d_wf.root", run, seg);
 
   if (!FastCloneAndFilter(filename, outFile))
   {
@@ -350,7 +351,7 @@ void TEST_2(int run, int seg, int threads)
   // Define a new RDataFrame that processes only 1% of the events
   auto nEventsToProcess = nEntriesDF / 1000;
   // auto df1percent = df.Range(0, nEventsToProcess);
-  // auto df1percent = df.Range(10, 50);
+//  auto df1percent = df.Range(0, 1000);
 
   Double_t dt = 4.;                                    // time bin (sample) width (4 ns), the total time window is then ntime*dt
   const int nslots = 1104;                             // nb maximal de slots dans tous les fADC
@@ -368,12 +369,37 @@ void TEST_2(int run, int seg, int threads)
   // Read tdc_offset_param (needed to determine HMS corrections to the timing)//For now, it is just one file
   Float_t tdcoffset[nblocks];
 
-  ifstream filetdc("/w/hallc-scshelf2102/nps/wassim/ANALYSIS/Work_Analysis/WF/BK_TEST/TEST_BOOM/6151-6168/fit_e_runs/RWF/tdc_offset_param.txt"); // Done
+  //original timing offsets from previous passes
+  ifstream filetdc("/w/hallc-scshelf2102/nps/wassim/ANALYSIS/Work_Analysis/WF/BK_TEST/TEST_BOOM/6151-6168/fit_e_runs/RWF/tdc_offset_param.txt"); // MUST be the SAME file used by HCANA
+  
+   // addtional offsets from Mark **ADDED** in Pass2
+  // Choose additional offset files from Mark for largest run <= run_number
+const char* baseDir = "/u/group/nps/mathison/analysis/NPS_Offsets/processed/";
+const int cutpoints[] = {
+  1572,1622,1690,1723,1801,1853,1976,2079,2162,2257,2352,2466,2569,2663,2769,
+  2914,3058,3164,3269,3383,3486,3593,3728,3776,3855,3955,4058,4156,4260,4362,
+  4456,4557,4636,4760,4851,4967,5054,5172,5272,5356,5524,5577,5657,5751,
+  5864,5967,6055,6153,6253,6352,6457,6557,6661,6758,6853,6942
+};
+int chosen = cutpoints[0];
+for (int t : cutpoints) {
+  if (t <= run) chosen = t; else break;
+}
+std::string file2path = std::string(baseDir) + "Offsets_" + std::to_string(chosen) + ".txt";
+std::ifstream file2tdc(file2path);
+if (!file2tdc.is_open()) {
+  std::cerr << "ERROR: could not open " << file2path << "\n";
+  // handle as you prefer (return/abort); keeping simple here
+}
+else std::cout << "using offsets from: " << file2path << "\n";
 
+  double offset2=0.;
   for (Int_t i = 0; i < nblocks; i++)
   {
 
     filetdc >> tdcoffset[i];
+    file2tdc >> offset2;
+    tdcoffset[i]+=offset2;
 
     if (run > 6183 && run < 7500)
     {
@@ -969,6 +995,7 @@ for (unsigned i = 0; i < data.Size(); ++i) {
           e=TMath::Sqrt(TMath::Abs(y * 4.096 / 2.)) / 4.096;
                            if (y < 1.) e=TMath::Sqrt(TMath::Abs(1. * 4.096 / 2.)) / 4.096;
             
+            e = std::sqrt(std::abs(4.0 + (y / 4.)));
             Err[it] = e;
           }
           // Get the number of pulses from tspecrtum
