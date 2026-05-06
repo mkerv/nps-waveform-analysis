@@ -14,9 +14,9 @@
 - Before running a job, zip the code via the script: ./zipCode.sh job-name
  - Verify that the code is now in a tar file under ./code
 - Generate a list of runs to analyze under ./run-list
-  - The run-list file should be titled "rl_PASSS2_<job-name>.dat", where job-name is typically the kinematic being analyzed
+  - The run-list file should be titled "rl_PASSS2_*job-name*.dat", where job-name is typically the kinematic being analyzed
   - The run-list file should be space-delimited with 3 columns: run-num , number of segments, memory required (set to 0 if unsure) 
-- Generate the job json via the script: python3 hcswif4.py job-name job-number number-threads
+- Generate the job json via the script: python3 hcswif4.py *job-name job-number number-threads*
   - Verify that a job json is now in ./jsons
 - Launch the job via the Swif2 system: 
 ```bash 
