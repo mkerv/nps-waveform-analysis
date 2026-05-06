@@ -27,7 +27,7 @@
 swif2 import -file wf-MT_<job-name>_<job-number>_<number-threads>.json
 swif2 start <job-name>
 ```
-- Output root files will be stored on mss at: /mss/hallc/c-nps/analysis/pass2/replays/updated/
+- Output root files will be stored on mss at: /mss/hallc/c-nps/analysis/pass2/WF/
   - To change the default output location, one must edit the hcswif4.py file first
 
 ## Prerequisites
